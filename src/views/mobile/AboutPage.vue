@@ -1,0 +1,356 @@
+<template>
+    <f7-page>
+        <f7-navbar>
+            <f7-nav-left :back-link="tt('Back')"></f7-nav-left>
+            <f7-nav-title :title="tt('About')"></f7-nav-title>
+            <f7-nav-right :class="{ 'navbar-hidden-icon': clientVersionMatchServerVersion && !forceShowRefreshBrowserCacheMenu }">
+                <f7-link icon-f7="" v-if="clientVersionMatchServerVersion && !forceShowRefreshBrowserCacheMenu"/>
+                <f7-link icon-f7="ellipsis" @click="showDiagnosisActionSheet = true"
+                         v-else-if="!clientVersionMatchServerVersion || forceShowRefreshBrowserCacheMenu"></f7-link>
+            </f7-nav-right>
+        </f7-navbar>
+
+        <f7-block-title class="margin-top">{{ tt('global.app.title') }}</f7-block-title>
+        <f7-list strong inset dividers>
+            <f7-list-item :title="tt('Version')" :after="clientVersion" @click="showVersion"></f7-list-item>
+            <f7-list-item :title="tt('Build Time')" :after="clientBuildTime" v-if="clientBuildTime"></f7-list-item>
+            <f7-list-item :title="tt('Official Website')" link="#" @click="openExternalUrl('https://github.com/mayswind/ezbookkeeping')"></f7-list-item>
+            <f7-list-item :title="tt('Report Issue')" link="#" @click="openExternalUrl('https://github.com/mayswind/ezbookkeeping/issues')"></f7-list-item>
+            <f7-list-item :title="tt('Getting help')" link="#" popup-open=".document-popup"></f7-list-item>
+            <f7-list-item :title="tt('License')" link="#" popup-open=".license-popup"></f7-list-item>
+        </f7-list>
+
+        <f7-block-title class="margin-top" v-if="exchangeRatesData && !isUserCustomExchangeRates">{{ tt('Exchange Rates Data') }}</f7-block-title>
+        <f7-list strong inset dividers v-if="exchangeRatesData && !isUserCustomExchangeRates">
+            <f7-list-item :title="tt('Provider')" :after="exchangeRatesData.dataSource" link="#"
+                          @click="openExternalUrl(exchangeRatesData.referenceUrl)" v-if="exchangeRatesData.referenceUrl"></f7-list-item>
+            <f7-list-item :title="tt('Provider')" :after="exchangeRatesData.dataSource" v-if="!exchangeRatesData.referenceUrl"></f7-list-item>
+        </f7-list>
+
+        <f7-block-title class="margin-top" v-if="mapProviderName">{{ tt('Map') }}</f7-block-title>
+        <f7-list strong inset dividers v-if="mapProviderName">
+            <f7-list-item :title="tt('Provider')" :after="mapProviderName" link="#"
+                          @click="openExternalUrl(mapProviderWebsite)" v-if="mapProviderWebsite"></f7-list-item>
+            <f7-list-item :title="tt('Provider')" :after="mapProviderName" v-if="!mapProviderWebsite"></f7-list-item>
+        </f7-list>
+
+        <f7-popup push swipe-to-close class="license-popup">
+            <f7-page>
+                <f7-navbar>
+                    <div class="swipe-handler"></div>
+                    <f7-nav-title class="license-title">{{ tt('License') }}</f7-nav-title>
+                </f7-navbar>
+                <f7-block strong outline class="license-content no-margin-top">
+                    <p>
+                        <span :key="num" v-for="(line, num) in licenseLines"
+                              :style="{ 'display': line ? 'initial' : 'block', 'padding' : line ? '0' : '0 0 1em 0' }">
+                            {{ line }}
+                        </span>
+                    </p>
+                    <hr/>
+                    <p>
+                        <span>ezBookkeeping's codebase and localization translation rely on contributions from the community. The following people have contributed to ezBookkeeping:</span>
+                    </p>
+                    <div>
+                        <strong>Project Maintainer</strong>
+                        <div class="margin-top-half">
+                            <f7-link target="_blank" @click="openExternalUrl('https://github.com/mayswind')">@mayswind</f7-link>
+                        </div>
+                    </div>
+                    <p class="margin-top">
+                        <strong>Code Contributors</strong>
+                    </p>
+                    <table class="contributors-table">
+                        <thead>
+                        <tr>
+                            <th>Contributor</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr :key="index" v-for="(contributor, index) in contributors.code">
+                            <td>
+                                <f7-link target="_blank" @click="openExternalUrl(`https://github.com/${contributor}`)">
+                                    @{{ contributor }}
+                                </f7-link>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                    <p class="margin-top">
+                        <strong>Translation Contributors</strong>
+                    </p>
+                    <table class="contributors-table">
+                        <thead>
+                        <tr>
+                            <th>Tag</th>
+                            <th>Language</th>
+                            <th>Contributors</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr :key="lang.languageTag" v-for="lang in allLanguages">
+                            <td>{{ lang.languageTag }}</td>
+                            <td>{{ lang.nativeDisplayName }}</td>
+                            <td>
+                                <template :key="contributor"
+                                          v-for="(contributor, index) in contributors.translators[lang.languageTag] ?? []">
+                                    <span v-if="index > 0">, </span>
+                                    <f7-link target="_blank" @click="openExternalUrl(`https://github.com/${contributor}`)">
+                                        @{{ contributor }}
+                                    </f7-link>
+                                </template>
+                                <span v-if="!contributors.translators[lang.languageTag] || !contributors.translators[lang.languageTag]?.length">/</span>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                    <p class="margin-top margin-bottom">
+                        <span>ezBookkeeping also contains additional third party software and illustration.</span><br/>
+                        <span>All the third party software / illustration included or linked is redistributed under the terms and conditions of their original licenses.</span>
+                    </p>
+                    <p :key="licenseInfo.name" v-for="licenseInfo in thirdPartyLicenses">
+                        <strong>{{ licenseInfo.name }}</strong>
+                        <br v-if="licenseInfo.copyright"/><span v-if="licenseInfo.copyright">{{ licenseInfo.copyright }}</span>
+                        <br v-if="licenseInfo.licenseUrl"/><span class="work-break-all" v-if="licenseInfo.licenseUrl">{{ licenseInfo.license || 'License' }}: {{ licenseInfo.licenseUrl }}</span>
+                        <br v-if="licenseInfo.url"/><span class="work-break-all" v-if="licenseInfo.url">{{ licenseInfo.url }}</span>
+                    </p>
+                </f7-block>
+            </f7-page>
+        </f7-popup>
+
+        <f7-popup push swipe-to-close class="document-popup" @popup:open="onDocumentPopupOpen">
+            <f7-page>
+                <f7-navbar>
+                    <f7-nav-left>
+                        <f7-link popup-close icon-f7="xmark"></f7-link>
+                    </f7-nav-left>
+                    <f7-nav-title class="license-title">{{ tt('Documentation') }}</f7-nav-title>
+                    <f7-nav-right class="navbar-compact-icons">
+                        <f7-link icon-f7="globe" @click="openExternalUrl(documentIframe?.src || documentUrl)"></f7-link>
+                    </f7-nav-right>
+                </f7-navbar>
+                <iframe ref="documentIframe" class="document-iframe" src="about:blank" :style="documentLoading ? 'display: none' : ''"></iframe>
+                <f7-preloader class="document-preloader" size="36" v-if="documentLoading"></f7-preloader>
+            </f7-page>
+        </f7-popup>
+
+        <f7-actions close-by-outside-click close-on-escape :opened="showDiagnosisActionSheet" @actions:closed="showDiagnosisActionSheet = false">
+            <f7-actions-group>
+                <f7-actions-button @click="refreshBrowserCache">{{ tt('Refresh Browser Cache') }}</f7-actions-button>
+            </f7-actions-group>
+            <f7-actions-group>
+                <f7-actions-button @click="showDiagnosisInformation">{{ tt('Show Diagnosis Information') }}</f7-actions-button>
+            </f7-actions-group>
+            <f7-actions-group>
+                <f7-actions-button bold close>{{ tt('Cancel') }}</f7-actions-button>
+            </f7-actions-group>
+        </f7-actions>
+
+        <information-sheet :title="tt('Diagnosis Information')"
+                           :information="diagnosisInformation"
+                           :row-count="15"
+                           :enable-copy="true"
+                           v-model:show="showDiagnosisInformationSheet"
+                           @info:copied="onDiagnosisInformationCopied">
+        </information-sheet>
+    </f7-page>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, useTemplateRef, onMounted } from 'vue';
+
+import type { LanguageOption } from '@/locales/index.ts';
+import { useI18n } from '@/locales/helpers.ts';
+import { useI18nUIComponents, isiOSHomeScreenMode, showLoading, hideLoading } from '@/lib/ui/mobile.ts';
+import { useAboutPageBase } from '@/views/base/AboutPageBase.ts';
+
+import { isWebAuthnCompletelySupported } from '@/lib/webauthn.ts';
+import { getStringifiedServerSetting } from '@/lib/server_settings.ts';
+
+const { tt, getCurrentLanguageTag, getAllLanguageOptions } = useI18n();
+const { showAlert, showToast, openExternalUrl } = useI18nUIComponents();
+const {
+    clientVersion,
+    clientVersionMatchServerVersion,
+    serverDisplayVersion,
+    clientBuildTime,
+    exchangeRatesData,
+    isUserCustomExchangeRates,
+    mapProviderName,
+    mapProviderWebsite,
+    contributors,
+    licenseLines,
+    thirdPartyLicenses,
+    refreshBrowserCache,
+    init
+} = useAboutPageBase();
+
+const documentIframe = useTemplateRef<HTMLIFrameElement>('documentIframe');
+
+const showDiagnosisActionSheet = ref<boolean>(false);
+const versionClickCount = ref<number>(0);
+const documentLoading = ref<boolean>(true);
+const diagnosisInformation = ref<string>('');
+const showDiagnosisInformationSheet = ref<boolean>(false);
+
+const allLanguages = computed<LanguageOption[]>(() => getAllLanguageOptions(false));
+const forceShowRefreshBrowserCacheMenu = computed<boolean>(() => versionClickCount.value >= 5);
+
+const documentUrl = computed<string>(() => {
+    if (getCurrentLanguageTag() === 'zh-Hans' || getCurrentLanguageTag() === 'zh-Hant') {
+        return 'https://ezbookkeeping.mayswind.net/zh_Hans/faq/';
+    } else {
+        return 'https://ezbookkeeping.mayswind.net/faq/';
+    }
+});
+
+function updateDiagnosisInformation(supportsWebAuthn: boolean, hasClipboardPermission: boolean, hasGeolocationPermission: boolean): void {
+    diagnosisInformation.value =
+        `ezBookkeeping Frontend Version: ${clientVersion}\n` +
+        `ezBookkeeping Backend Version: ${serverDisplayVersion.value}\n` +
+        `User Agent: ${navigator.userAgent}\n` +
+        `Security Context: ${window.isSecureContext}\n` +
+        `Standalone: ${isiOSHomeScreenMode()}\n` +
+        `Service Worker Supported: ${!!navigator.serviceWorker}\n` +
+        `Service Worker Active: ${!!navigator.serviceWorker && !!navigator.serviceWorker.controller ? 'Yes' : 'No'}\n` +
+        `Service Worker State: ${!!navigator.serviceWorker && !!navigator.serviceWorker.controller ? navigator.serviceWorker.controller.state : 'N/A'}\n` +
+        `Storage API Supported: ${!!navigator.storage}\n` +
+        `WebAuthn API Supported: ${supportsWebAuthn}\n` +
+        `Clipboard API Supported: ${!!navigator.clipboard}\n` +
+        `Clipboard Permission Granted: ${hasClipboardPermission}\n` +
+        `Geolocation API Supported: ${!!navigator.geolocation}\n` +
+        `Geolocation Permission Granted: ${hasGeolocationPermission}\n` +
+        `ezBookkeeping Server Settings:\n${getStringifiedServerSetting()}`;
+}
+
+function showDiagnosisInformation(): void {
+    let loading: boolean = false;
+    let supportsWebAuthn: boolean = false;
+    let hasClipboardPermission: boolean = false;
+    let hasGeolocationPermission: boolean = false;
+
+    const promises: Promise<void>[] = [];
+
+    promises.push(isWebAuthnCompletelySupported().then(() => {
+        supportsWebAuthn = true;
+    }).catch(() => {
+        supportsWebAuthn = false;
+    }));
+
+    if (navigator.permissions && navigator.permissions.query) {
+        loading = true;
+        showLoading(() => loading);
+
+        promises.push(navigator.permissions.query({ name: 'clipboard-read' as PermissionName }).then(result => {
+            hasClipboardPermission = result.state === 'granted';
+        }).catch(() => {
+            hasClipboardPermission = false;
+        }));
+
+        promises.push(navigator.permissions.query({ name: 'geolocation' as PermissionName }).then(result => {
+            hasGeolocationPermission = result.state === 'granted';
+        }).catch(() => {
+            hasGeolocationPermission = false;
+        }));
+    }
+
+    if (promises.length > 0) {
+        Promise.all(promises).finally(() => {
+            loading = false;
+            hideLoading();
+            updateDiagnosisInformation(supportsWebAuthn, hasClipboardPermission, hasGeolocationPermission);
+            showDiagnosisInformationSheet.value = true;
+        });
+    } else {
+        updateDiagnosisInformation(supportsWebAuthn, hasClipboardPermission, hasGeolocationPermission);
+        showDiagnosisInformationSheet.value = true;
+    }
+}
+
+function showVersion(): void {
+    let versionMessage = `${tt('Frontend Version')}: ${clientVersion}`;
+
+    if (serverDisplayVersion.value) {
+        versionMessage += `<br/>${tt('Backend Version')}: ${serverDisplayVersion.value}`;
+    }
+
+    versionClickCount.value++;
+
+    if (serverDisplayVersion.value && serverDisplayVersion.value !== 'unknown' && serverDisplayVersion.value !== clientVersion) {
+        showAlert(versionMessage);
+    }
+}
+
+function onDocumentPopupOpen(): void {
+    documentLoading.value = true;
+
+    if (documentIframe.value) {
+        documentIframe.value.src = documentUrl.value;
+    }
+}
+
+function onDiagnosisInformationCopied(): void {
+    showToast('Data copied');
+}
+
+
+onMounted(() => {
+    if (documentIframe.value) {
+        documentIframe.value.onload = () => {
+            documentLoading.value = false;
+            documentIframe.value?.contentWindow?.scrollTo(0, 0);
+        };
+    }
+});
+
+init();
+</script>
+
+<style>
+.license-popup {
+    --f7-navbar-height: 60px;
+
+    .license-title {
+        margin-top: 18px;
+        font-size: var(--ebk-license-popup-title-font-size);
+    }
+
+    .license-content {
+        font-size: var(--ebk-license-content-font-size);
+    }
+}
+
+.document-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+
+.document-preloader {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.contributors-table {
+    border-collapse: collapse;
+
+    > thead > tr {
+        > th:not(:first-child) {
+            padding-inline-start: 10px;
+        }
+
+        > th:not(:last-child) {
+            padding-inline-end: 10px;
+        }
+    }
+
+    > thead > tr > th,
+    > tbody > tr > td {
+        padding: 4px 8px;
+        border: 1px solid var(--f7-list-item-border-color);
+        text-align: start;
+    }
+}
+</style>

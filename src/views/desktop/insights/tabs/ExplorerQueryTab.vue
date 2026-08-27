@@ -1,0 +1,919 @@
+<template>
+    <v-card-subtitle class="px-4">
+        <div class="title-and-toolbar d-flex">
+            <v-btn color="default" variant="outlined"
+                   :disabled="loading || disabled || !!editingQuery"
+                   @click="addQuery">{{ tt('Add Query') }}</v-btn>
+            <v-spacer />
+            <v-btn color="secondary" variant="tonal"
+                   :disabled="loading || disabled || !!editingQuery || queries.length < 1"
+                   @click="clearAllQueries">{{ tt('Clear All') }}</v-btn>
+        </div>
+    </v-card-subtitle>
+    <v-card-text class="pt-0 pb-0">
+        <draggable-list
+            item-key="id"
+            handle=".drag-handle"
+            ghost-class="dragging-item"
+            v-model="queries"
+        >
+            <template #item="{ element, index }">
+                <v-card border class="card-title-with-bg my-4">
+                    <v-card-title class="d-flex align-center py-2 px-5">
+                        <v-icon :icon="mdiTextBoxSearchOutline" size="20" />
+                        <span class="query-name text-body-large ms-2" v-if="editingQuery !== element">{{ element.name || tt('format.misc.queryIndex', { index: formatNumberToLocalizedNumeralsWithoutDigitGrouping(index + 1) }) }}</span>
+                        <div class="query-name-edit ms-2" v-if="editingQuery === element">
+                            <v-text-field autofocus type="text" density="compact" variant="underlined"
+                                          :disabled="loading || disabled"
+                                          :placeholder="tt('format.misc.queryIndex', { index: formatNumberToLocalizedNumeralsWithoutDigitGrouping(index + 1) })"
+                                          v-text-field-auto-width="{ minWidth: 20, maxWidth: 300, auxSpanId: `query-name-aux-span-${index + 1}-${element.id}` }"
+                                          v-model="editingQueryName"
+                                          @keyup.esc="cancelUpdateQueryName"
+                                          @keyup.enter="updateQueryName(element)" />
+                            <span :id="`query-name-aux-span-${index + 1}-${element.id}`" />
+                        </div>
+                        <v-btn class="ms-2" density="compact" color="primary" variant="text"
+                               :icon="true" :disabled="loading || disabled"
+                               @click="updateQueryName(element)"
+                               v-if="editingQuery === element">
+                            <v-icon :icon="mdiCheck" size="18" />
+                            <v-tooltip activator="parent">{{ tt('Update') }}</v-tooltip>
+                        </v-btn>
+                        <v-btn class="ms-1" density="compact" color="default" variant="text"
+                               :icon="true" :disabled="loading || disabled"
+                               @click="cancelUpdateQueryName"
+                               v-if="editingQuery === element">
+                            <v-icon :icon="mdiClose" size="18" />
+                            <v-tooltip activator="parent">{{ tt('Cancel') }}</v-tooltip>
+                        </v-btn>
+                        <v-btn class="ms-2" density="compact" color="default" variant="text"
+                               :icon="true" :disabled="loading || disabled || !!editingQuery"
+                               @click="editingQueryName = element.name; editingQuery = element"
+                               v-if="!editingQuery || editingQuery !== element">
+                            <v-icon :icon="mdiPencilOutline" size="18" />
+                            <v-tooltip activator="parent">{{ tt('Modify Query Name') }}</v-tooltip>
+                        </v-btn>
+                        <v-btn class="ms-1" density="compact" color="default" variant="text"
+                               :icon="true" :disabled="loading || disabled || !!editingQuery"
+                               @click="duplicateQuery(element)"
+                               v-if="!editingQuery || editingQuery !== element">
+                            <v-icon :icon="mdiContentCopy" size="18" />
+                            <v-tooltip activator="parent">{{ tt('Duplicate') }}</v-tooltip>
+                        </v-btn>
+                        <v-spacer />
+                        <v-switch class="bidirectional-switch ms-2" color="secondary"
+                                  :disabled="loading || disabled || !!editingQuery || !element.conditions || element.conditions.length < 1"
+                                  :label="tt('Expression')"
+                                  v-model="showExpression[element.id]"
+                                  @click="showExpression[element.id] = !showExpression[element.id]">
+                            <template #prepend>
+                                <span>{{ tt('Editor') }}</span>
+                            </template>
+                        </v-switch>
+                        <v-btn class="ms-2" density="compact" color="default" variant="text"
+                               :icon="true" :disabled="loading || disabled || !!editingQuery || queries.length < 1 || (queries.length === 1 && (!element.conditions || element.conditions.length < 1))"
+                               @click="removeQuery(element, index)">
+                            <v-icon :icon="mdiClose" size="18" />
+                            <v-tooltip activator="parent">{{ tt('Remove Query') }}</v-tooltip>
+                        </v-btn>
+                        <span class="ms-1 mb-1">
+                            <v-icon :class="!loading && !disabled && !editingQuery && queries.length > 1 ? 'drag-handle' : 'disabled'"
+                                    :icon="mdiDrag"/>
+                            <v-tooltip activator="parent" v-if="!loading && !disabled && !editingQuery && queries.length > 1">{{ tt('Drag to Reorder') }}</v-tooltip>
+                        </span>
+                    </v-card-title>
+
+                    <v-divider />
+
+                    <v-card-text>
+                        <v-row>
+                            <v-col cols="12">
+                                <div class="text-center py-4" v-if="loading">
+                                    <v-skeleton-loader class="skeleton-no-margin ms-3" type="text" :loading="true"></v-skeleton-loader>
+                                </div>
+
+                                <div class="text-body-medium text-center py-3" v-else-if="!loading && !element.conditions || element.conditions.length < 1">
+                                    {{ tt('No conditions defined. All transactions will match.') }}
+                                </div>
+
+                                <div v-else-if="element.conditions && element.conditions.length > 0 && !showExpression[element.id]">
+                                    <div :key="conditionIndex" v-for="(conditionWithRelation, conditionIndex) in element.conditions">
+                                        <div class="d-flex overflow-x-auto align-center gap-2 mb-3"
+                                             :style="getConditionStyle(element, conditionIndex)"
+                                             v-if="conditionWithRelation.relation !== TransactionExplorerConditionRelation.SubEnd">
+                                            <v-select
+                                                disabled
+                                                class="flex-0-0"
+                                                width="140px"
+                                                density="compact"
+                                                item-title="displayName"
+                                                item-value="value"
+                                                :items="[{ value: TransactionExplorerConditionRelation.First, displayName: tt('WHERE') }]"
+                                                :model-value="TransactionExplorerConditionRelation.First"
+                                                v-if="conditionIndex < 1"
+                                            />
+
+                                            <v-select
+                                                class="flex-0-0"
+                                                width="140px"
+                                                density="compact"
+                                                item-title="displayName"
+                                                item-value="value"
+                                                :disabled="loading || disabled || !!editingQuery"
+                                                :items="[
+                                                    { value: TransactionExplorerConditionRelation.And, displayName: tt('AND') },
+                                                    { value: TransactionExplorerConditionRelation.Or, displayName: tt('OR') },
+                                                    { value: TransactionExplorerConditionRelation.AndSub, displayName: tt('AND SUB') },
+                                                    { value: TransactionExplorerConditionRelation.OrSub, displayName: tt('OR SUB') }
+                                                ]"
+                                                :model-value="conditionWithRelation.relation"
+                                                @update:model-value="updateItemRelation(element, conditionIndex, $event)"
+                                                v-else-if="conditionIndex >= 1"
+                                            />
+
+                                            <v-select
+                                                class="flex-0-0"
+                                                density="compact"
+                                                item-title="name"
+                                                item-value="value"
+                                                :disabled="loading || disabled || !!editingQuery"
+                                                :items="allTransactionExplorerConditionFields"
+                                                @update:model-value="updateConditionField(element, conditionIndex, TransactionExplorerConditionField.valueOf($event))"
+                                                v-model="conditionWithRelation.condition.field"
+                                            />
+
+                                            <v-select
+                                                class="flex-0-0"
+                                                density="compact"
+                                                item-title="name"
+                                                item-value="value"
+                                                :disabled="loading || disabled || !!editingQuery"
+                                                :items="getAllTransactionExplorerConditionOperators(conditionWithRelation.getSupportedOperators())"
+                                                v-model="conditionWithRelation.condition.operator"
+                                            />
+
+                                            <div class="d-flex w-100 flex-1-1" style="min-width: 280px;">
+                                                <v-select
+                                                    multiple chips closable-chips
+                                                    density="compact"
+                                                    item-title="displayName"
+                                                    item-value="type"
+                                                    :disabled="loading || disabled || !!editingQuery"
+                                                    :placeholder="tt('None')"
+                                                    :items="allAvailableDayOfWeekOptions"
+                                                    v-model="conditionWithRelation.condition.value"
+                                                    v-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.TransactionTimeDayOfWeek.value"
+                                                >
+                                                    <template #item="{ props, internalItem }">
+                                                        <v-list-item :value="internalItem.value" v-bind="props">
+                                                            <template #title>
+                                                                <v-list-item-title>
+                                                                    <div class="d-flex align-center">{{ internalItem.title }}</div>
+                                                                </v-list-item-title>
+                                                            </template>
+                                                        </v-list-item>
+                                                    </template>
+                                                </v-select>
+
+                                                <v-select
+                                                    multiple chips closable-chips
+                                                    density="compact"
+                                                    item-title="displayName"
+                                                    item-value="type"
+                                                    :disabled="loading || disabled || !!editingQuery"
+                                                    :placeholder="tt('None')"
+                                                    :items="allAvailableDayOfMonthOptions"
+                                                    v-model="conditionWithRelation.condition.value"
+                                                    v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.TransactionTimeDayOfMonth.value"
+                                                >
+                                                    <template #item="{ props, internalItem }">
+                                                        <v-list-item :value="internalItem.value" v-bind="props">
+                                                            <template #title>
+                                                                <v-list-item-title>
+                                                                    <div class="d-flex align-center">{{ internalItem.title }}</div>
+                                                                </v-list-item-title>
+                                                            </template>
+                                                        </v-list-item>
+                                                    </template>
+                                                </v-select>
+
+                                                <v-select
+                                                    multiple chips closable-chips
+                                                    density="compact"
+                                                    item-title="displayName"
+                                                    item-value="type"
+                                                    :disabled="loading || disabled || !!editingQuery"
+                                                    :placeholder="tt('None')"
+                                                    :items="allAvailableMonthOfYearOptions"
+                                                    v-model="conditionWithRelation.condition.value"
+                                                    v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.TransactionTimeMonthOfYear.value"
+                                                >
+                                                    <template #item="{ props, internalItem }">
+                                                        <v-list-item :value="internalItem.value" v-bind="props">
+                                                            <template #title>
+                                                                <v-list-item-title>
+                                                                    <div class="d-flex align-center">{{ internalItem.title }}</div>
+                                                                </v-list-item-title>
+                                                            </template>
+                                                        </v-list-item>
+                                                    </template>
+                                                </v-select>
+
+                                                <v-select
+                                                    multiple chips closable-chips
+                                                    density="compact"
+                                                    item-title="displayName"
+                                                    item-value="type"
+                                                    :disabled="loading || disabled || !!editingQuery"
+                                                    :placeholder="tt('None')"
+                                                    :items="allAvailableHourOfDayOptions"
+                                                    v-model="conditionWithRelation.condition.value"
+                                                    v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.TransactionTimeHourOfDay.value"
+                                                >
+                                                    <template #item="{ props, internalItem }">
+                                                        <v-list-item :value="internalItem.value" v-bind="props">
+                                                            <template #title>
+                                                                <v-list-item-title>
+                                                                    <div class="d-flex align-center">{{ internalItem.title }}</div>
+                                                                </v-list-item-title>
+                                                            </template>
+                                                        </v-list-item>
+                                                    </template>
+                                                </v-select>
+
+                                                <div class="d-flex w-100 align-center gap-2"
+                                                     v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.TransactionTimezone.value">
+                                                    <number-input density="compact"
+                                                                  :disabled="loading || disabled || !!editingQuery"
+                                                                  :min-value="WESTERNMOST_TIMEZONE_UTC_OFFSET"
+                                                                  :max-value="EASTERNMOST_TIMEZONE_UTC_OFFSET"
+                                                                  :max-decimal-count="0"
+                                                                  v-model="conditionWithRelation.condition.value[0]"
+                                                                  v-if="conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.MinuteOffsetBetween.value ||
+                                                                        conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.MinuteOffsetNotBetween.value"
+                                                    />
+                                                    <span class="ms-2 me-2"
+                                                          v-if="conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.MinuteOffsetBetween.value ||
+                                                                conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.MinuteOffsetNotBetween.value">~</span>
+                                                    <number-input density="compact"
+                                                                  :disabled="loading || disabled || !!editingQuery"
+                                                                  :min-value="WESTERNMOST_TIMEZONE_UTC_OFFSET"
+                                                                  :max-value="EASTERNMOST_TIMEZONE_UTC_OFFSET"
+                                                                  :max-decimal-count="0"
+                                                                  v-model="conditionWithRelation.condition.value[1]"
+                                                                  v-if="conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.MinuteOffsetBetween.value ||
+                                                                        conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.MinuteOffsetNotBetween.value"
+                                                    />
+                                                </div>
+
+                                                <v-select
+                                                    multiple chips closable-chips
+                                                    density="compact"
+                                                    item-title="displayName"
+                                                    item-value="type"
+                                                    :disabled="loading || disabled || !!editingQuery"
+                                                    :placeholder="tt('None')"
+                                                    :items="[
+                                                        { type: TransactionType.Expense, displayName: tt('Expense') },
+                                                        { type: TransactionType.Income, displayName: tt('Income') },
+                                                        { type: TransactionType.Transfer, displayName: tt('Transfer') }
+                                                    ]"
+                                                    v-model="conditionWithRelation.condition.value"
+                                                    v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.TransactionType.value"
+                                                >
+                                                    <template #item="{ props, internalItem }">
+                                                        <v-list-item :value="internalItem.value" v-bind="props">
+                                                            <template #title>
+                                                                <v-list-item-title>
+                                                                    <div class="d-flex align-center">{{ internalItem.title }}</div>
+                                                                </v-list-item-title>
+                                                            </template>
+                                                        </v-list-item>
+                                                    </template>
+                                                </v-select>
+
+                                                <v-text-field
+                                                    class="always-cursor-pointer text-field-truncate"
+                                                    density="compact"
+                                                    item-title="displayName"
+                                                    item-value="type"
+                                                    persistent-placeholder
+                                                    :readonly="true"
+                                                    :disabled="loading || disabled || !!editingQuery || !hasAnyTransactionCategory"
+                                                    :placeholder="tt('None')"
+                                                    :model-value="getFilteredTransactionCategoriesDisplayContent(arrayItemToObjectField(conditionWithRelation.condition.value as string[], true))"
+                                                    @click="currentCondition = conditionWithRelation.condition; showFilterTransactionCategoriesDialog = true"
+                                                    v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.TransactionCategory.value"
+                                                />
+
+                                                <v-text-field
+                                                    class="always-cursor-pointer text-field-truncate"
+                                                    density="compact"
+                                                    item-title="displayName"
+                                                    item-value="type"
+                                                    persistent-placeholder
+                                                    :readonly="true"
+                                                    :disabled="loading || disabled || !!editingQuery || !hasAnyAccount"
+                                                    :placeholder="tt('None')"
+                                                    :model-value="getFilteredAccountsDisplayContent(arrayItemToObjectField(conditionWithRelation.condition.value as string[], true))"
+                                                    @click="currentCondition = conditionWithRelation.condition; showFilterSourceAccountsDialog = true"
+                                                    v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.SourceAccount.value"
+                                                />
+
+                                                <v-text-field
+                                                    class="always-cursor-pointer text-field-truncate"
+                                                    density="compact"
+                                                    item-title="displayName"
+                                                    item-value="type"
+                                                    persistent-placeholder
+                                                    :readonly="true"
+                                                    :disabled="loading || disabled || !!editingQuery || !hasAnyAccount"
+                                                    :placeholder="tt('None')"
+                                                    :model-value="getFilteredAccountsDisplayContent(arrayItemToObjectField(conditionWithRelation.condition.value as string[], true))"
+                                                    @click="currentCondition = conditionWithRelation.condition; showFilterDestinationAccountsDialog = true"
+                                                    v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.DestinationAccount.value"
+                                                />
+
+                                                <div class="d-flex w-100 align-center gap-2"
+                                                     v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.SourceAmount.value ||
+                                                                conditionWithRelation.condition.field === TransactionExplorerConditionField.DestinationAmount.value">
+                                                    <amount-input density="compact"
+                                                                  :currency="defaultCurrency"
+                                                                  :disabled="loading || disabled || !!editingQuery"
+                                                                  v-model="conditionWithRelation.condition.value[0]"
+                                                    />
+                                                    <span class="ms-2 me-2"
+                                                          v-if="conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.Between.value ||
+                                                                conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.NotBetween.value">~</span>
+                                                    <amount-input density="compact"
+                                                                  :currency="defaultCurrency"
+                                                                  :disabled="loading || disabled || !!editingQuery"
+                                                                  v-model="conditionWithRelation.condition.value[1]"
+                                                                  v-if="conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.Between.value ||
+                                                                        conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.NotBetween.value"
+                                                    />
+                                                </div>
+
+                                                <div class="d-flex w-100 align-center gap-2"
+                                                     v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.GeoLocation.value">
+                                                    <v-text-field disabled density="compact"
+                                                                  :placeholder="tt('None')"
+                                                                  v-if="conditionWithRelation.condition.operator !== TransactionExplorerConditionOperator.LatitudeBetween.value &&
+                                                                        conditionWithRelation.condition.operator !== TransactionExplorerConditionOperator.LatitudeNotBetween.value &&
+                                                                        conditionWithRelation.condition.operator !== TransactionExplorerConditionOperator.LongitudeBetween.value &&
+                                                                        conditionWithRelation.condition.operator !== TransactionExplorerConditionOperator.LongitudeNotBetween.value"
+                                                    />
+                                                    <number-input density="compact"
+                                                                  :disabled="loading || disabled || !!editingQuery"
+                                                                  :min-value="TransactionExplorerGeoLocationCondition.MIN_LATITUDE"
+                                                                  :max-value="TransactionExplorerGeoLocationCondition.MAX_LATITUDE"
+                                                                  :max-decimal-count="6"
+                                                                  v-model="conditionWithRelation.condition.value[0]"
+                                                                  v-if="conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LatitudeBetween.value ||
+                                                                        conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LatitudeNotBetween.value"
+                                                    />
+                                                    <number-input density="compact"
+                                                                  :disabled="loading || disabled || !!editingQuery"
+                                                                  :min-value="TransactionExplorerGeoLocationCondition.MIN_LONGITUDE"
+                                                                  :max-value="TransactionExplorerGeoLocationCondition.MAX_LONGITUDE"
+                                                                  :max-decimal-count="6"
+                                                                  v-model="conditionWithRelation.condition.value[2]"
+                                                                  v-if="conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LongitudeBetween.value ||
+                                                                        conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LongitudeNotBetween.value"
+                                                    />
+                                                    <span class="ms-2 me-2"
+                                                          v-if="conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LatitudeBetween.value ||
+                                                                conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LatitudeNotBetween.value ||
+                                                                conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LongitudeBetween.value ||
+                                                                conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LongitudeNotBetween.value">~</span>
+                                                    <number-input density="compact"
+                                                                  :disabled="loading || disabled || !!editingQuery"
+                                                                  :min-value="TransactionExplorerGeoLocationCondition.MIN_LATITUDE"
+                                                                  :max-value="TransactionExplorerGeoLocationCondition.MAX_LATITUDE"
+                                                                  :max-decimal-count="6"
+                                                                  v-model="conditionWithRelation.condition.value[1]"
+                                                                  v-if="conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LatitudeBetween.value ||
+                                                                        conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LatitudeNotBetween.value"
+                                                    />
+                                                    <number-input density="compact"
+                                                                  :disabled="loading || disabled || !!editingQuery"
+                                                                  :min-value="TransactionExplorerGeoLocationCondition.MIN_LONGITUDE"
+                                                                  :max-value="TransactionExplorerGeoLocationCondition.MAX_LONGITUDE"
+                                                                  :max-decimal-count="6"
+                                                                  v-model="conditionWithRelation.condition.value[3]"
+                                                                  v-if="conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LongitudeBetween.value ||
+                                                                        conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.LongitudeNotBetween.value"
+                                                    />
+                                                </div>
+
+                                                <div class="d-flex w-100" v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.TransactionTag.value">
+                                                    <v-text-field
+                                                        disabled
+                                                        persistent-placeholder
+                                                        density="compact"
+                                                        :placeholder="tt('None')"
+                                                        v-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.TransactionTag.value &&
+                                                             (conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.IsEmpty.value || conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.IsNotEmpty.value)"
+                                                    />
+
+                                                    <transaction-tag-auto-complete
+                                                        density="compact"
+                                                        :disabled="loading || disabled || !!editingQuery"
+                                                        v-model="conditionWithRelation.condition.value"
+                                                        v-else-if="conditionWithRelation.condition.operator !== TransactionExplorerConditionOperator.IsEmpty.value && conditionWithRelation.condition.operator !== TransactionExplorerConditionOperator.IsNotEmpty.value"
+                                                    />
+                                                </div>
+
+                                                <v-text-field disabled density="compact"
+                                                              :placeholder="tt('None')"
+                                                              v-else-if="conditionWithRelation.condition.field === TransactionExplorerConditionField.Pictures.value"
+                                                />
+
+                                                <v-text-field disabled density="compact"
+                                                              :placeholder="tt('None')"
+                                                              v-else-if="(conditionWithRelation.condition.field === TransactionExplorerConditionField.Description.value || conditionWithRelation.condition.field === TransactionExplorerConditionField.DescriptionCaseInsensitive.value || conditionWithRelation.condition.field === TransactionExplorerConditionField.DescriptionNormalized.value) &&
+                                                                         conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.IsEmpty.value || conditionWithRelation.condition.operator === TransactionExplorerConditionOperator.IsNotEmpty.value"
+                                                />
+
+                                                <v-text-field density="compact"
+                                                              :disabled="loading || disabled || !!editingQuery"
+                                                              :placeholder="tt('None')"
+                                                              v-model="conditionWithRelation.condition.value"
+                                                              v-else-if="(conditionWithRelation.condition.field === TransactionExplorerConditionField.Description.value || conditionWithRelation.condition.field === TransactionExplorerConditionField.DescriptionCaseInsensitive.value || conditionWithRelation.condition.field === TransactionExplorerConditionField.DescriptionNormalized.value) &&
+                                                                         conditionWithRelation.condition.operator !== TransactionExplorerConditionOperator.IsEmpty.value && conditionWithRelation.condition.operator !== TransactionExplorerConditionOperator.IsNotEmpty.value"
+                                                />
+                                            </div>
+
+                                            <v-btn color="default" density="compact"
+                                                   variant="text"
+                                                   :icon="true"
+                                                   :disabled="loading || disabled || !!editingQuery"
+                                                   @click="removeCondition(element, conditionIndex)">
+                                                <v-icon :icon="mdiClose" size="18" />
+                                                <v-tooltip activator="parent">{{ tt('Remove Condition') }}</v-tooltip>
+                                            </v-btn>
+                                        </div>
+                                        <div class="d-flex overflow-x-auto align-center gap-2 mb-3"
+                                             :style="getConditionStyle(element, conditionIndex)"
+                                             v-if="conditionWithRelation.relation === TransactionExplorerConditionRelation.SubEnd">
+                                            <v-btn class="px-2" density="comfortable" color="primary" variant="text"
+                                                   :prepend-icon="mdiPlus"
+                                                   :disabled="loading || disabled || !!editingQuery"
+                                                   @click="addSubCondition(element, conditionIndex)">
+                                                {{ tt('Add Sub Condition') }}
+                                            </v-btn>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-else-if="element.conditions && element.conditions.length > 0 && showExpression[element.id]">
+                                    <div class="w-100 code-container">
+                                        <v-textarea class="w-100 always-cursor-text mb-4" :readonly="true"
+                                                    :value="getExpression(element, index)"></v-textarea>
+                                    </div>
+                                </div>
+
+                                <v-btn class="px-2" density="comfortable" color="primary" variant="text"
+                                       :prepend-icon="mdiPlus"
+                                       :disabled="loading || disabled || !!editingQuery || showExpression[element.id]"
+                                       @click="addCondition(element)">
+                                    {{ tt('Add Condition') }}
+                                </v-btn>
+                            </v-col>
+                        </v-row>
+                    </v-card-text>
+                </v-card>
+            </template>
+        </draggable-list>
+    </v-card-text>
+
+    <account-filter-settings-dialog type="custom"
+                                    :selected-account-ids="isArray(currentCondition?.value) ? currentCondition?.value as string[] : []"
+                                    v-model:show="showFilterSourceAccountsDialog"
+                                    @settings:change="updateSourceAccount" />
+
+    <account-filter-settings-dialog type="custom"
+                                    :selected-account-ids="isArray(currentCondition?.value) ? currentCondition?.value as string[] : []"
+                                    v-model:show="showFilterDestinationAccountsDialog"
+                                    @settings:change="updateDestinationAccount" />
+
+    <category-filter-settings-dialog type="custom"
+                                     :selected-category-ids="isArray(currentCondition?.value) ? currentCondition?.value as string[] : []"
+                                     v-model:show="showFilterTransactionCategoriesDialog"
+                                     @settings:change="updateTransactionCategories" />
+
+    <snack-bar ref="snackbar" />
+</template>
+
+<script setup lang="ts">
+import AccountFilterSettingsDialog from '@/views/desktop/common/dialogs/AccountFilterSettingsDialog.vue';
+import CategoryFilterSettingsDialog from '@/views/desktop/common/dialogs/CategoryFilterSettingsDialog.vue';
+
+import SnackBar from '@/components/desktop/SnackBar.vue';
+
+import { ref, computed, useTemplateRef, watch } from 'vue';
+
+import { useI18n } from '@/locales/helpers.ts';
+
+import { useUserStore } from '@/stores/user.ts';
+import { useAccountsStore } from '@/stores/account.ts';
+import { useTransactionCategoriesStore } from '@/stores/transactionCategory.ts';
+import { useTransactionTagsStore } from '@/stores/transactionTag.ts';
+import { useExplorersStore } from '@/stores/explorer.ts';
+
+import { type NameValue, type TypeAndDisplayName, values } from '@/core/base.ts';
+import { AccountType } from '@/core/account.ts';
+import { TransactionType } from '@/core/transaction.ts';
+import {
+    TransactionExplorerConditionRelation,
+    TransactionExplorerConditionField,
+    TransactionExplorerConditionOperator
+} from '@/core/explorer.ts';
+
+import {
+    WESTERNMOST_TIMEZONE_UTC_OFFSET,
+    EASTERNMOST_TIMEZONE_UTC_OFFSET,
+} from '@/consts/timezone.ts';
+
+import {
+    type TransactionExplorerCondition,
+    TransactionExplorerQuery,
+    TransactionExplorerGeoLocationCondition
+} from '@/models/explorer.ts';
+
+import {
+    isArray,
+    isObjectEmpty,
+    arrayItemToObjectField
+} from '@/lib/common.ts';
+
+import { generateRandomUUID } from '@/lib/misc.ts';
+
+import logger from '@/lib/logger.ts';
+
+import {
+    mdiTextBoxSearchOutline,
+    mdiPlus,
+    mdiPencilOutline,
+    mdiContentCopy,
+    mdiCheck,
+    mdiClose,
+    mdiDrag
+} from '@mdi/js';
+
+interface ExplorerQueryTabProps {
+    loading?: boolean;
+    disabled?: boolean;
+}
+
+type SnackBarType = InstanceType<typeof SnackBar>;
+
+const props = defineProps<ExplorerQueryTabProps>();
+
+const {
+    tt,
+    joinMultiText,
+    getAllMonths,
+    getAllWeekDays,
+    getAllHours,
+    getAvailableMonthDays,
+    getAllTransactionExplorerConditionFields,
+    getAllTransactionExplorerConditionOperators,
+    formatNumberToLocalizedNumeralsWithoutDigitGrouping
+} = useI18n();
+
+const userStore = useUserStore();
+const accountsStore = useAccountsStore();
+const transactionCategoriesStore = useTransactionCategoriesStore();
+const transactionTagsStore = useTransactionTagsStore();
+const explorersStore = useExplorersStore();
+
+const snackbar = useTemplateRef<SnackBarType>('snackbar');
+
+const currentCondition = ref<TransactionExplorerCondition | undefined>(undefined);
+const showExpression = ref<Record<string, boolean>>({});
+const showFilterSourceAccountsDialog = ref<boolean>(false);
+const showFilterDestinationAccountsDialog = ref<boolean>(false);
+const showFilterTransactionCategoriesDialog = ref<boolean>(false);
+const editingQuery = ref<TransactionExplorerQuery | undefined>(undefined);
+const editingQueryName = ref<string>('');
+
+const queries = computed<TransactionExplorerQuery[]>({
+    get: () => explorersStore.currentExploration.queries,
+    set: (value: TransactionExplorerQuery[]) => {
+        explorersStore.currentExploration.queries = value;
+    }
+});
+
+const defaultCurrency = computed<string>(() => userStore.currentUserDefaultCurrency);
+const hasAnyAccount = computed<boolean>(() => accountsStore.allPlainAccounts.length > 0);
+const hasAnyTransactionCategory = computed<boolean>(() => !isObjectEmpty(transactionCategoriesStore.allTransactionCategoriesMap));
+
+const allTransactionExplorerConditionFields = computed<NameValue[]>(() => getAllTransactionExplorerConditionFields());
+const allAvailableDayOfWeekOptions = computed<TypeAndDisplayName[]>(() => getAllWeekDays(userStore.currentUserFirstDayOfWeek));
+const allAvailableDayOfMonthOptions = computed<TypeAndDisplayName[]>(() => getAvailableMonthDays(31, 3));
+const allAvailableMonthOfYearOptions = computed<TypeAndDisplayName[]>(() => getAllMonths());
+const allAvailableHourOfDayOptions = computed<TypeAndDisplayName[]>(() => getAllHours());
+
+function getFilteredAccountsDisplayContent(filterAccountIds?: Record<string, boolean>): string {
+    if ((props.loading && !hasAnyAccount.value) || !accountsStore.allVisiblePlainAccounts || !accountsStore.allVisiblePlainAccounts.length) {
+        return '';
+    }
+
+    if (!filterAccountIds) {
+        return tt('All');
+    }
+
+    let allAccountSelected = true;
+    const selectedAccountNames: string[] = [];
+
+    for (const account of accountsStore.allPlainAccounts) {
+        if (account.type === AccountType.MultiSubAccounts.type) {
+            continue;
+        }
+
+        if (!filterAccountIds[account.id]) {
+            allAccountSelected = false;
+        } else {
+            selectedAccountNames.push(account.name);
+        }
+    }
+
+    if (allAccountSelected) {
+        return tt('All');
+    } else if (selectedAccountNames.length < 1) {
+        return '';
+    }
+
+    return joinMultiText(selectedAccountNames);
+}
+
+function getFilteredTransactionCategoriesDisplayContent(filterTransactionCategoryIds?: Record<string, boolean>): string {
+    if ((props.loading && !hasAnyTransactionCategory.value) || !transactionCategoriesStore.allTransactionCategoriesMap) {
+        return '';
+    }
+
+    if (!filterTransactionCategoryIds) {
+        return tt('All');
+    }
+
+    let allCategorySelected = true;
+    const selectedCategoryNames: string[] = [];
+
+    for (const transactionCategory of values(transactionCategoriesStore.allTransactionCategoriesMap)) {
+        if (!transactionCategory.parentId || transactionCategory.parentId === '0') {
+            continue;
+        }
+
+        if (!filterTransactionCategoryIds[transactionCategory.id]) {
+            allCategorySelected = false;
+        } else {
+            selectedCategoryNames.push(transactionCategory.name);
+        }
+    }
+
+    if (allCategorySelected) {
+        return tt('All');
+    } else if (selectedCategoryNames.length < 1) {
+        return '';
+    }
+
+    return joinMultiText(selectedCategoryNames);
+}
+
+function getConditionStyle(query: TransactionExplorerQuery, conditionIndex: number): Record<string, string> {
+    const style: Record<string, string> = {};
+    const depths = query.getConditionNestingDepths();
+    const item = query.conditions[conditionIndex];
+    let depth = 0;
+
+    if (item && item.relation === TransactionExplorerConditionRelation.SubEnd) {
+        depth = depths[conditionIndex - 1] ?? 0;
+    } else {
+        depth = depths[conditionIndex] ?? 0;
+    }
+
+    if (depth > 0) {
+        style['margin-inline-start'] = (depth * 1.5) + 'rem';
+    }
+
+    return style;
+}
+
+function addQuery(): void {
+    queries.value.push(TransactionExplorerQuery.create(generateRandomUUID()));
+}
+
+function updateQueryName(query: TransactionExplorerQuery): void {
+    query.name = editingQueryName.value;
+    editingQuery.value = undefined;
+    editingQueryName.value = '';
+}
+
+function cancelUpdateQueryName(): void {
+    editingQuery.value = undefined;
+    editingQueryName.value = '';
+}
+
+function duplicateQuery(query: TransactionExplorerQuery): void {
+    queries.value.push(query.clone(generateRandomUUID()));
+}
+
+function removeQuery(query: TransactionExplorerQuery, queryIndex: number): void {
+    if (queries.value.length > 0) {
+        queries.value.splice(queryIndex, 1);
+    }
+
+    if (explorersStore.currentExploration.datatableQuerySource === query.id) {
+        explorersStore.currentExploration.datatableQuerySource = '';
+    }
+
+    if (queries.value.length < 1) {
+        queries.value.push(TransactionExplorerQuery.create(generateRandomUUID()));
+    }
+}
+
+function clearAllQueries(): void {
+    queries.value.length = 0;
+    queries.value.push(TransactionExplorerQuery.create(generateRandomUUID()));
+}
+
+function addCondition(query: TransactionExplorerQuery): void {
+    const newCondition = query.addNewCondition(TransactionExplorerConditionField.TransactionType, query.conditions.length < 1);
+    query.conditions.push(newCondition);
+}
+
+function addSubCondition(query: TransactionExplorerQuery, subEndIndex: number): void {
+    const newCondition = query.addNewCondition(TransactionExplorerConditionField.TransactionType, false);
+    query.conditions.splice(subEndIndex, 0, newCondition);
+}
+
+function removeCondition(query: TransactionExplorerQuery, conditionIndex: number): void {
+    const item = query.conditions[conditionIndex];
+
+    if (!item || item.relation === TransactionExplorerConditionRelation.SubEnd) {
+        return;
+    }
+
+    query.conditions.splice(conditionIndex, 1);
+
+    if (conditionIndex === 0 && query.conditions.length > 0) {
+        const newFirstCondition = query.conditions[0];
+
+        if (newFirstCondition) {
+            if (newFirstCondition.relation === TransactionExplorerConditionRelation.AndSub || newFirstCondition.relation === TransactionExplorerConditionRelation.OrSub) {
+                removeSubCondition(query, conditionIndex + 1);
+            }
+
+            newFirstCondition.relation = TransactionExplorerConditionRelation.First;
+        }
+    }
+
+    const oldStartSubCondition = item.relation === TransactionExplorerConditionRelation.AndSub || item.relation === TransactionExplorerConditionRelation.OrSub;
+
+    if (oldStartSubCondition && conditionIndex < query.conditions.length && query.conditions[conditionIndex]) {
+        const nextItem = query.conditions[conditionIndex];
+
+        if (nextItem.relation === TransactionExplorerConditionRelation.SubEnd) {
+            query.conditions.splice(conditionIndex, 1);
+        } else if (nextItem.relation === TransactionExplorerConditionRelation.AndSub || nextItem.relation === TransactionExplorerConditionRelation.OrSub) {
+            nextItem.relation = item.relation;
+            removeSubCondition(query, conditionIndex);
+        } else {
+            nextItem.relation = item.relation;
+        }
+    }
+}
+
+function removeSubCondition(query: TransactionExplorerQuery, conditionIndex: number): void {
+    let depth = 1;
+
+    for (let i = conditionIndex + 1; i < query.conditions.length; i++) {
+        const currentCondition = query.conditions[i];
+
+        if (!currentCondition) {
+            continue;
+        }
+
+        if (currentCondition.relation === TransactionExplorerConditionRelation.AndSub || currentCondition.relation === TransactionExplorerConditionRelation.OrSub) {
+            depth++;
+        } else if (currentCondition.relation === TransactionExplorerConditionRelation.SubEnd) {
+            depth--;
+
+            if (depth === 0) {
+                query.conditions.splice(i, 1);
+                break;
+            }
+        }
+    }
+}
+
+function updateItemRelation(query: TransactionExplorerQuery, conditionIndex: number, value: TransactionExplorerConditionRelation): void {
+    const item = query.conditions[conditionIndex];
+
+    if (!item || item.relation === TransactionExplorerConditionRelation.SubEnd) {
+        return;
+    }
+
+    const oldStartSubCondition = item.relation === TransactionExplorerConditionRelation.AndSub || item.relation === TransactionExplorerConditionRelation.OrSub;
+    const newStartSubCondition = value === TransactionExplorerConditionRelation.AndSub || value === TransactionExplorerConditionRelation.OrSub;
+
+    item.relation = value;
+
+    if (!oldStartSubCondition && newStartSubCondition) {
+        query.conditions.splice(conditionIndex + 1, 0, query.addSubConditionEnd());
+    } else if (oldStartSubCondition && !newStartSubCondition) {
+        removeSubCondition(query, conditionIndex);
+    }
+}
+
+function updateConditionField(query: TransactionExplorerQuery, conditionIndex: number, newField: TransactionExplorerConditionField | undefined): void {
+    if (!newField) {
+        return;
+    }
+
+    const oldConditionWithRelation = query.conditions[conditionIndex];
+
+    if (!oldConditionWithRelation) {
+        return;
+    }
+
+    const newConditionWithRelation = query.addNewCondition(newField, conditionIndex < 1);
+    oldConditionWithRelation.condition = newConditionWithRelation.condition;
+}
+
+function updateSourceAccount(changed: boolean, selectedAccountIds?: string[]): void {
+    if (!changed || !currentCondition.value || currentCondition.value.field !== TransactionExplorerConditionField.SourceAccount.value) {
+        showFilterSourceAccountsDialog.value = false;
+        return;
+    }
+
+    currentCondition.value.value = selectedAccountIds || [];
+    currentCondition.value = undefined;
+    showFilterSourceAccountsDialog.value = false;
+}
+
+function updateDestinationAccount(changed: boolean, selectedAccountIds?: string[]): void {
+    if (!changed || !currentCondition.value || currentCondition.value.field !== TransactionExplorerConditionField.DestinationAccount.value) {
+        showFilterDestinationAccountsDialog.value = false;
+        return;
+    }
+
+    currentCondition.value.value = selectedAccountIds || [];
+    currentCondition.value = undefined;
+    showFilterDestinationAccountsDialog.value = false;
+}
+
+function updateTransactionCategories(changed: boolean, selectedCategoryIds?: string[]): void {
+    if (!changed || !currentCondition.value || currentCondition.value.field !== TransactionExplorerConditionField.TransactionCategory.value) {
+        showFilterTransactionCategoriesDialog.value = false;
+        return;
+    }
+
+    currentCondition.value.value = selectedCategoryIds || [];
+    currentCondition.value = undefined;
+    showFilterTransactionCategoriesDialog.value = false;
+}
+
+function getExpression(query: TransactionExplorerQuery, queryIndex: number): string {
+    if (!query.conditions || query.conditions.length < 1) {
+        return '';
+    }
+
+    try {
+        return query.toExpression(transactionCategoriesStore.allTransactionCategoriesMap, accountsStore.allAccountsMap, transactionTagsStore.allTransactionTagsMap);
+    } catch (ex) {
+        logger.error('failed to generate expression for exploration query#' + queryIndex, ex);
+        snackbar.value?.showError(tt('Failed to generate expression'));
+        return tt('Failed to generate expression');
+    }
+}
+
+if (queries.value.length === 0) {
+    queries.value.push(TransactionExplorerQuery.create(generateRandomUUID()));
+}
+
+watch(() => queries.value, () => {
+    editingQuery.value = undefined;
+    editingQueryName.value = '';
+});
+</script>
+
+<style>
+.query-name {
+    white-space: pre;
+}
+
+.query-name-edit {
+    display: flex;
+    align-items: center;
+    height: 36px;
+}
+
+.query-name-edit .v-field {
+    font-size: 0.9375rem;
+}
+
+.query-name-edit .v-field__input {
+    padding-top: 0;
+}
+</style>

@@ -1,0 +1,275 @@
+<template>
+    <v-dialog width="800" :persistent="displayOrderModified" v-model="showState" @update:model-value="!showState && close()">
+        <one-column-dialog-layout content-class="pa-0" :disabled="loading || updating"
+                                  :title="tt('Change Exploration Display Order')" :cancel-button-title="tt('Close')"
+                                  @cancel="close">
+            <template #after-title>
+                <v-btn density="compact" color="default" variant="text"
+                       class="ms-2" :icon="true" :disabled="loading || updating"
+                       :loading="loading" @click="reload">
+                    <template #loader>
+                        <v-progress-circular indeterminate size="20"/>
+                    </template>
+                    <v-icon :icon="mdiRefresh" size="22" />
+                    <v-tooltip activator="parent">{{ tt('Refresh') }}</v-tooltip>
+                </v-btn>
+                <v-btn density="compact" color="primary" variant="text" class="ms-1" :icon="true"
+                       :disabled="loading || updating || !displayOrderModified" @click="saveDisplayOrder">
+                    <v-icon :icon="mdiCheck" size="22" />
+                    <v-tooltip activator="parent">{{ tt('Save Display Order') }}</v-tooltip>
+                </v-btn>
+            </template>
+
+            <template #toolbar>
+                <v-btn density="comfortable" color="default" variant="text" class="ms-2"
+                       :disabled="loading || updating" :icon="true">
+                    <v-icon :icon="mdiDotsVertical" size="22" />
+                    <v-menu activator="parent">
+                        <v-list>
+                            <v-list-item :prepend-icon="mdiEyeOutline"
+                                         :title="tt('Show Hidden Explorations')"
+                                         v-if="!showHidden" @click="showHidden = true"></v-list-item>
+                            <v-list-item :prepend-icon="mdiEyeOffOutline"
+                                         :title="tt('Hide Hidden Explorations')"
+                                         v-if="showHidden" @click="showHidden = false"></v-list-item>
+                        </v-list>
+                    </v-menu>
+                </v-btn>
+            </template>
+
+            <template #content>
+                <v-table hover density="comfortable" class="explorers-table w-100 table-striped">
+                    <tbody v-if="loading && noAvailableExploration">
+                    <tr :key="itemIdx" v-for="itemIdx in [ 1, 2, 3, 4, 5, 6 ]">
+                        <td class="px-0">
+                            <v-skeleton-loader type="text" :loading="true"></v-skeleton-loader>
+                        </td>
+                    </tr>
+                    </tbody>
+
+                    <tbody v-if="!loading && noAvailableExploration">
+                    <tr>
+                        <td>{{ tt('No available exploration') }}</td>
+                    </tr>
+                    </tbody>
+
+                    <draggable-list tag="tbody"
+                                    item-key="id"
+                                    handle=".drag-handle"
+                                    ghost-class="dragging-item"
+                                    v-model="allExplorations"
+                                    @change="onMove">
+                        <template #item="{ element }">
+                            <tr class="explorers-table-row" v-if="showHidden || !element.hidden"
+                                @mouseenter="hoveredExplorationId = element.id" @mouseleave="hoveredExplorationId = ''">
+                                <td>
+                                    <div class="d-flex align-center">
+                                        <div class="d-flex align-center">
+                                            <span>{{ element.name }}</span>
+                                        </div>
+
+                                        <v-spacer/>
+
+                                        <template v-if="hoveredExplorationId === element.id && !loading">
+                                            <v-btn class="px-2 ms-2" color="default"
+                                                   density="compact" variant="text"
+                                                   :prepend-icon="element.hidden ? mdiEyeOutline : mdiEyeOffOutline"
+                                                   :loading="explorationHiding[element.id]"
+                                                   :disabled="loading || updating"
+                                                   @click="hide(element, !element.hidden)">
+                                                <template #loader>
+                                                    <v-progress-circular indeterminate size="20" width="2"/>
+                                                </template>
+                                                {{ element.hidden ? tt('Show') : tt('Hide') }}
+                                            </v-btn>
+                                        </template>
+
+                                        <span class="ms-2">
+                                            <v-icon :class="!loading && !updating && !noAvailableExploration ? 'drag-handle' : 'disabled'"
+                                                    :icon="mdiDrag"/>
+                                            <v-tooltip activator="parent" v-if="!loading && !updating && !noAvailableExploration && hoveredExplorationId === element.id">{{ tt('Drag to Reorder') }}</v-tooltip>
+                                        </span>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </draggable-list>
+                </v-table>
+            </template>
+        </one-column-dialog-layout>
+    </v-dialog>
+
+    <snack-bar ref="snackbar" />
+</template>
+
+<script setup lang="ts">
+import SnackBar from '@/components/desktop/SnackBar.vue';
+
+import { ref, computed, useTemplateRef } from 'vue';
+
+import { useI18n } from '@/locales/helpers.ts';
+
+import { useExplorersStore } from '@/stores/explorer.ts';
+
+import { type InsightsExplorerBasicInfo } from '@/models/explorer.ts';
+
+import {
+    mdiRefresh,
+    mdiCheck,
+    mdiDotsVertical,
+    mdiEyeOutline,
+    mdiEyeOffOutline,
+    mdiDrag
+} from '@mdi/js';
+
+type SnackBarType = InstanceType<typeof SnackBar>;
+
+const { tt } = useI18n();
+
+const explorersStore = useExplorersStore();
+
+let resolveFunc: (() => void) | null = null;
+
+const snackbar = useTemplateRef<SnackBarType>('snackbar');
+
+const showState = ref<boolean>(false);
+const loading = ref<boolean>(true);
+const updating = ref<boolean>(false);
+const hoveredExplorationId = ref<string>('');
+const explorationHiding = ref<Record<string, boolean>>({});
+const displayOrderModified = ref<boolean>(false);
+const showHidden = ref<boolean>(false);
+
+const allExplorations = computed<InsightsExplorerBasicInfo[]>(() => explorersStore.allExplorationBasicInfos);
+
+const noAvailableExploration = computed<boolean>(() => {
+    for (const exploration of allExplorations.value) {
+        if (showHidden.value || !exploration.hidden) {
+            return false;
+        }
+    }
+
+    return true;
+});
+
+function open(): Promise<void> {
+    showHidden.value = false;
+    showState.value = true;
+    loading.value = true;
+
+    explorersStore.loadAllExplorationBasicInfos({
+        force: false
+    }).then(() => {
+        loading.value = false;
+        displayOrderModified.value = false;
+    }).catch(error => {
+        loading.value = false;
+
+        if (!error.processed) {
+            snackbar.value?.showError(error);
+        }
+    });
+
+    return new Promise<void>((resolve) => {
+        resolveFunc = resolve;
+    });
+}
+
+function reload(): void {
+    loading.value = true;
+
+    explorersStore.loadAllExplorationBasicInfos({
+        force: true
+    }).then(() => {
+        loading.value = false;
+        displayOrderModified.value = false;
+
+        snackbar.value?.showMessage('Exploration list has been updated');
+    }).catch(error => {
+        loading.value = false;
+
+        if (error && error.isUpToDate) {
+            displayOrderModified.value = false;
+        }
+
+        if (!error.processed) {
+            snackbar.value?.showError(error);
+        }
+    });
+}
+
+function hide(exploration: InsightsExplorerBasicInfo, hidden: boolean): void {
+    updating.value = true;
+    explorationHiding.value[exploration.id] = true;
+
+    explorersStore.hideExploration({
+        exploration: exploration,
+        hidden: hidden
+    }).then(() => {
+        updating.value = false;
+        explorationHiding.value[exploration.id] = false;
+    }).catch(error => {
+        updating.value = false;
+        explorationHiding.value[exploration.id] = false;
+
+        if (!error.processed) {
+            snackbar.value?.showError(error);
+        }
+    });
+}
+
+function saveDisplayOrder(): void {
+    if (!displayOrderModified.value) {
+        return;
+    }
+
+    loading.value = true;
+
+    explorersStore.updateExplorationDisplayOrders().then(() => {
+        loading.value = false;
+        displayOrderModified.value = false;
+    }).catch(error => {
+        loading.value = false;
+
+        if (!error.processed) {
+            snackbar.value?.showError(error);
+        }
+    });
+}
+
+function close(): void {
+    if (loading.value || updating.value) {
+        return;
+    }
+
+    resolveFunc?.();
+    showState.value = false;
+}
+
+function onMove(event: { moved: { element: { id: string }; oldIndex: number; newIndex: number } }): void {
+    if (!event || !event.moved) {
+        return;
+    }
+
+    const moveEvent = event.moved;
+
+    if (!moveEvent.element || !moveEvent.element.id) {
+        snackbar.value?.showMessage('Unable to move exploration');
+        return;
+    }
+
+    explorersStore.changeExplorationDisplayOrder({
+        explorationId: moveEvent.element.id,
+        from: moveEvent.oldIndex,
+        to: moveEvent.newIndex
+    }).then(() => {
+        displayOrderModified.value = true;
+    }).catch(error => {
+        snackbar.value?.showError(error);
+    });
+}
+
+defineExpose({
+    open
+});
+</script>

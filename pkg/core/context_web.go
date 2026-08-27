@@ -1,0 +1,275 @@
+package core
+
+import (
+	"net"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/mayswind/ezbookkeeping/pkg/errs"
+)
+
+const webContextRequestIdFieldKey = "REQUEST_ID"
+const webContextTextualTokenFieldKey = "TOKEN_STRING"
+const webContextTokenClaimsFieldKey = "TOKEN_CLAIMS"
+const webContextTokenContextFieldKey = "TOKEN_CONTEXT"
+const webContextResponseErrorFieldKey = "RESPONSE_ERROR"
+
+// AcceptLanguageHeaderName represents the header name of accept language
+const AcceptLanguageHeaderName = "Accept-Language"
+
+// RemoteClientPortHeader represents the header name of remote client source port
+const RemoteClientPortHeader = "X-Real-Port"
+
+// ClientTimezoneOffsetHeaderName represents the header name of client timezone offset
+const ClientTimezoneOffsetHeaderName = "X-Timezone-Offset"
+
+// ClientTimezoneNameHeaderName represents the header name of client timezone name
+const ClientTimezoneNameHeaderName = "X-Timezone-Name"
+
+const tokenHeaderName = "Authorization"
+const tokenHeaderValuePrefix = "bearer "
+const tokenQueryStringParam = "token"
+const tokenCookieParam = "ebk_auth_token"
+
+// WebContext represents the request and response context
+type WebContext struct {
+	*gin.Context
+	trustedProxies []*net.IPNet
+	// DO NOT ADD ANY FIELD IN THIS CONTEXT, THIS CONTEXT IS JUST A WRAPPER
+}
+
+func (c *WebContext) ClientPort() uint16 {
+	if c.isTrustedProxy() {
+		remotePort := c.GetHeader(RemoteClientPortHeader)
+
+		if remotePort != "" {
+			remotePortNum, err := strconv.ParseInt(remotePort, 10, 32)
+
+			if err == nil {
+				return uint16(remotePortNum)
+			}
+		}
+	}
+
+	if c.Request == nil {
+		return 0
+	}
+
+	_, remotePort, err := net.SplitHostPort(c.Request.RemoteAddr)
+
+	if err != nil {
+		return 0
+	}
+
+	remotePortNum, err := strconv.ParseInt(remotePort, 10, 32)
+
+	if err != nil {
+		return 0
+	}
+
+	return uint16(remotePortNum)
+}
+
+// SetContextId sets the given request id to context
+func (c *WebContext) SetContextId(requestId string) {
+	c.Set(webContextRequestIdFieldKey, requestId)
+}
+
+// GetContextId returns the current request id
+func (c *WebContext) GetContextId() string {
+	requestId, exists := c.Get(webContextRequestIdFieldKey)
+
+	if !exists {
+		return ""
+	}
+
+	return requestId.(string)
+}
+
+// SetTextualToken sets the given user token to context
+func (c *WebContext) SetTextualToken(token string) {
+	c.Set(webContextTextualTokenFieldKey, token)
+}
+
+// GetTextualToken returns the current user textual token
+func (c *WebContext) GetTextualToken() string {
+	token, exists := c.Get(webContextTextualTokenFieldKey)
+
+	if !exists {
+		return ""
+	}
+
+	return token.(string)
+}
+
+// SetTokenClaims sets the given user token to context
+func (c *WebContext) SetTokenClaims(claims *UserTokenClaims) {
+	c.Set(webContextTokenClaimsFieldKey, claims)
+}
+
+// GetTokenClaims returns the current user token
+func (c *WebContext) GetTokenClaims() *UserTokenClaims {
+	claims, exists := c.Get(webContextTokenClaimsFieldKey)
+
+	if !exists {
+		return nil
+	}
+
+	return claims.(*UserTokenClaims)
+}
+
+// SetTokenContext sets the given user token context to context
+func (c *WebContext) SetTokenContext(context string) {
+	c.Set(webContextTokenContextFieldKey, context)
+}
+
+// GetTokenContext returns the current user token context
+func (c *WebContext) GetTokenContext() string {
+	context, exists := c.Get(webContextTokenContextFieldKey)
+
+	if !exists {
+		return ""
+	}
+
+	return context.(string)
+}
+
+// GetCurrentUid returns the current user uid by the current user token
+func (c *WebContext) GetCurrentUid() int64 {
+	claims := c.GetTokenClaims()
+
+	if claims == nil {
+		return 0
+	}
+
+	return claims.Uid
+}
+
+// GetTokenStringFromHeader returns the token string from the request header
+func (c *WebContext) GetTokenStringFromHeader() string {
+	tokenHeader := c.GetHeader(tokenHeaderName)
+
+	if len(tokenHeader) < 7 || !strings.EqualFold(tokenHeader[:7], tokenHeaderValuePrefix) {
+		return ""
+	}
+
+	return tokenHeader[7:]
+}
+
+// GetTokenStringFromQueryString returns the token string from the request query string
+func (c *WebContext) GetTokenStringFromQueryString() string {
+	return c.Query(tokenQueryStringParam)
+}
+
+// GetTokenStringFromCookie returns the token string from the request cookie
+func (c *WebContext) GetTokenStringFromCookie() string {
+	tokenCookie, err := c.Cookie(tokenCookieParam)
+
+	if err != nil {
+		return ""
+	}
+
+	return tokenCookie
+}
+
+func (c *WebContext) SetTokenStringToCookie(token string, tokenExpiredTime int, path string) {
+	if token != "" {
+		c.SetCookie(tokenCookieParam, token, tokenExpiredTime, path, "", false, true)
+	} else {
+		c.SetCookie(tokenCookieParam, "", -1, path, "", false, true)
+	}
+}
+
+// GetClientLocale returns the client locale name
+func (c *WebContext) GetClientLocale() string {
+	value := c.GetHeader(AcceptLanguageHeaderName)
+
+	return value
+}
+
+func (c *WebContext) GetClientTimezone() (*time.Location, error) {
+	timezoneName := c.getClientTimezoneName()
+
+	if timezoneName != "" {
+		location, err := time.LoadLocation(timezoneName)
+
+		if err == nil && location != nil {
+			return location, nil
+		}
+	}
+
+	utcOffset, err := c.getClientTimezoneOffset()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return time.FixedZone("Client Fixed Timezone", int(utcOffset)*60), nil
+}
+
+// SetResponseError sets the response error
+func (c *WebContext) SetResponseError(error *errs.Error) {
+	c.Set(webContextResponseErrorFieldKey, error)
+}
+
+// GetResponseError returns the response error
+func (c *WebContext) GetResponseError() *errs.Error {
+	err, exists := c.Get(webContextResponseErrorFieldKey)
+
+	if !exists {
+		return nil
+	}
+
+	return err.(*errs.Error)
+}
+
+// getClientTimezoneOffset returns the client timezone offset
+func (c *WebContext) getClientTimezoneOffset() (int16, error) {
+	value := c.GetHeader(ClientTimezoneOffsetHeaderName)
+	offset, err := strconv.Atoi(value)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return int16(offset), nil
+}
+
+// getClientTimezoneName returns the client timezone name
+func (c *WebContext) getClientTimezoneName() string {
+	value := c.GetHeader(ClientTimezoneNameHeaderName)
+
+	return value
+}
+
+// isTrustedProxy returns whether the given ip is from a trusted proxy
+func (c *WebContext) isTrustedProxy() bool {
+	if c.trustedProxies == nil {
+		return false
+	}
+
+	ip := net.ParseIP(c.RemoteIP())
+
+	if ip == nil {
+		return false
+	}
+
+	for _, cidr := range c.trustedProxies {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// WrapWebContext returns a context wrapped by this file
+func WrapWebContext(ginCtx *gin.Context, trustedCIDRs []*net.IPNet) *WebContext {
+	return &WebContext{
+		Context:        ginCtx,
+		trustedProxies: trustedCIDRs,
+	}
+}

@@ -1,0 +1,581 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"time"
+
+	"github.com/pquerna/otp/totp"
+
+	"github.com/mayswind/ezbookkeeping/pkg/avatars"
+	"github.com/mayswind/ezbookkeeping/pkg/core"
+	"github.com/mayswind/ezbookkeeping/pkg/duplicatechecker"
+	"github.com/mayswind/ezbookkeeping/pkg/errs"
+	"github.com/mayswind/ezbookkeeping/pkg/log"
+	"github.com/mayswind/ezbookkeeping/pkg/models"
+	"github.com/mayswind/ezbookkeeping/pkg/services"
+	"github.com/mayswind/ezbookkeeping/pkg/settings"
+	"github.com/mayswind/ezbookkeeping/pkg/utils"
+)
+
+// AuthorizationsApi represents authorization api
+type AuthorizationsApi struct {
+	ApiUsingConfig
+	ApiUsingDuplicateChecker
+	ApiWithUserInfo
+	users                   *services.UserService
+	userAppCloudSettings    *services.UserApplicationCloudSettingsService
+	tokens                  *services.TokenService
+	twoFactorAuthorizations *services.TwoFactorAuthorizationService
+	userExternalAuths       *services.UserExternalAuthService
+}
+
+// Initialize a authorization api singleton instance
+var (
+	Authorizations = &AuthorizationsApi{
+		ApiUsingConfig: ApiUsingConfig{
+			container: settings.Container,
+		},
+		ApiUsingDuplicateChecker: ApiUsingDuplicateChecker{
+			ApiUsingConfig: ApiUsingConfig{
+				container: settings.Container,
+			},
+			container: duplicatechecker.Container,
+		},
+		ApiWithUserInfo: ApiWithUserInfo{
+			ApiUsingConfig: ApiUsingConfig{
+				container: settings.Container,
+			},
+			ApiUsingAvatarProvider: ApiUsingAvatarProvider{
+				container: avatars.Container,
+			},
+		},
+		users:                   services.Users,
+		userAppCloudSettings:    services.UserApplicationCloudSettings,
+		tokens:                  services.Tokens,
+		twoFactorAuthorizations: services.TwoFactorAuthorizations,
+		userExternalAuths:       services.UserExternalAuths,
+	}
+)
+
+// AuthorizeHandler verifies and authorizes current login request
+func (a *AuthorizationsApi) AuthorizeHandler(c *core.WebContext) (any, *errs.Error) {
+	if !a.CurrentConfig().EnableInternalAuth {
+		return nil, errs.ErrCannotLoginByPassword
+	}
+
+	var credential models.UserLoginRequest
+	err := c.ShouldBindJSON(&credential)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.AuthorizeHandler] parse request failed, because %s", err.Error())
+		return nil, errs.ErrLoginNameOrPasswordInvalid
+	}
+
+	err = a.CheckFailureCount(c, 0)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.AuthorizeHandler] cannot login for user \"%s\", because %s", credential.LoginName, err.Error())
+		return nil, errs.Or(err, errs.ErrFailureCountLimitReached)
+	}
+
+	user, uid, err := a.users.GetUserByUsernameOrEmailAndPassword(c, credential.LoginName, credential.Password)
+
+	if errs.IsCustomError(err) {
+		failureCheckErr := a.CheckAndIncreaseFailureCount(c, uid)
+
+		if failureCheckErr != nil {
+			log.Warnf(c, "[authorizations.AuthorizeHandler] cannot login for user \"%s\", because %s", credential.LoginName, failureCheckErr.Error())
+			return nil, errs.Or(failureCheckErr, errs.ErrFailureCountLimitReached)
+		}
+	}
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.AuthorizeHandler] login failed for user \"%s\", because %s", credential.LoginName, err.Error())
+		return nil, errs.ErrLoginNameOrPasswordWrong
+	}
+
+	if user.Disabled {
+		log.Warnf(c, "[authorizations.AuthorizeHandler] login failed for user \"%s\", because user is disabled", credential.LoginName)
+		return nil, errs.ErrUserIsDisabled
+	}
+
+	if a.CurrentConfig().EnableUserForceVerifyEmail && !user.EmailVerified {
+		hasValidEmailVerifyToken, err := a.tokens.ExistsValidTokenByType(c, user.Uid, core.USER_TOKEN_TYPE_EMAIL_VERIFY)
+
+		if err != nil {
+			log.Warnf(c, "[authorizations.AuthorizeHandler] failed check whether user \"uid:%d\" has valid verify email token, because %s", user.Uid, err.Error())
+			hasValidEmailVerifyToken = false
+		}
+
+		log.Warnf(c, "[authorizations.AuthorizeHandler] login failed for user \"%s\", because user has not verified email", credential.LoginName)
+
+		return nil, errs.NewErrorWithContext(errs.ErrEmailIsNotVerified, map[string]any{
+			"email":                    user.Email,
+			"hasValidEmailVerifyToken": hasValidEmailVerifyToken,
+		})
+	}
+
+	err = a.users.UpdateUserLastLoginTime(c, user.Uid)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.AuthorizeHandler] failed to update last login time for user \"uid:%d\", because %s", user.Uid, err.Error())
+	}
+
+	twoFactorEnable := a.tokens.CurrentConfig().EnableTwoFactor
+
+	if twoFactorEnable {
+		twoFactorEnable, err = a.twoFactorAuthorizations.ExistsTwoFactorSetting(c, user.Uid)
+
+		if err != nil {
+			log.Errorf(c, "[authorizations.AuthorizeHandler] failed to check two-factor setting for user \"uid:%d\", because %s", user.Uid, err.Error())
+			return nil, errs.Or(err, errs.ErrSystemError)
+		}
+	}
+
+	var token string
+	var claims *core.UserTokenClaims
+
+	if twoFactorEnable {
+		token, claims, err = a.tokens.CreateRequire2FAToken(c, user)
+	} else {
+		token, claims, err = a.tokens.CreateToken(c, user)
+	}
+
+	if err != nil {
+		log.Errorf(c, "[authorizations.AuthorizeHandler] failed to create token for user \"uid:%d\", because %s", user.Uid, err.Error())
+		return nil, errs.ErrTokenGenerating
+	}
+
+	if !twoFactorEnable {
+		c.SetTextualToken(token)
+	}
+
+	c.SetTokenClaims(claims)
+	c.SetTokenContext("")
+
+	userApplicationCloudSettings, err := a.userAppCloudSettings.GetUserApplicationCloudSettingsByUid(c, user.Uid)
+	var applicationCloudSettingSlice *models.ApplicationCloudSettingSlice = nil
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.AuthorizeHandler] failed to get latest user application cloud settings for user \"uid:%d\", because %s", user.Uid, err.Error())
+	} else if userApplicationCloudSettings != nil && len(userApplicationCloudSettings.Settings) > 0 {
+		applicationCloudSettingSlice = &userApplicationCloudSettings.Settings
+	}
+
+	log.Infof(c, "[authorizations.AuthorizeHandler] user \"uid:%d\" has logged in, token type is %d, token will be expired at %d", user.Uid, claims.Type, claims.ExpiresAt)
+
+	authResp := a.getAuthResponse(c, token, twoFactorEnable, user, applicationCloudSettingSlice)
+	return authResp, nil
+}
+
+// TwoFactorAuthorizeHandler verifies and authorizes current 2fa login by passcode
+func (a *AuthorizationsApi) TwoFactorAuthorizeHandler(c *core.WebContext) (any, *errs.Error) {
+	if !a.CurrentConfig().EnableInternalAuth {
+		return nil, errs.ErrCannotLoginByPassword
+	}
+
+	var credential models.TwoFactorLoginRequest
+	err := c.ShouldBindJSON(&credential)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeHandler] parse request failed, because %s", err.Error())
+		return nil, errs.ErrPasscodeInvalid
+	}
+
+	uid := c.GetCurrentUid()
+	err = a.CheckFailureCount(c, uid)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeHandler] cannot auth for user \"uid:%d\", because %s", uid, err.Error())
+		return nil, errs.Or(err, errs.ErrFailureCountLimitReached)
+	}
+
+	twoFactorSetting, err := a.twoFactorAuthorizations.GetUserTwoFactorSettingByUid(c, uid)
+
+	if err != nil {
+		log.Errorf(c, "[authorizations.TwoFactorAuthorizeHandler] failed to get two-factor setting for user \"uid:%d\", because %s", uid, err.Error())
+		return nil, errs.Or(err, errs.ErrSystemError)
+	}
+
+	passcodeUsed, passcodeHash := a.is2FAPasscodeUsed(c, uid, credential.Passcode)
+
+	if passcodeUsed {
+		return nil, errs.ErrPasscodeInvalid
+	}
+
+	if !totp.Validate(credential.Passcode, twoFactorSetting.Secret) {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeHandler] passcode is invalid for user \"uid:%d\"", uid)
+
+		err = a.CheckAndIncreaseFailureCount(c, uid)
+
+		if err != nil {
+			log.Warnf(c, "[authorizations.TwoFactorAuthorizeHandler] cannot auth for user \"uid:%d\", because %s", uid, err.Error())
+			return nil, errs.Or(err, errs.ErrFailureCountLimitReached)
+		}
+
+		return nil, errs.ErrPasscodeInvalid
+	}
+
+	a.update2FAPasscodeUsed(c, uid, passcodeHash)
+
+	user, err := a.users.GetUserById(c, uid)
+
+	if err != nil {
+		log.Errorf(c, "[authorizations.TwoFactorAuthorizeHandler] failed to get user \"uid:%d\" info, because %s", uid, err.Error())
+		return nil, errs.ErrUserNotFound
+	}
+
+	if user.Disabled {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeHandler] user \"uid:%d\" is disabled", user.Uid)
+		return nil, errs.ErrUserIsDisabled
+	}
+
+	if a.CurrentConfig().EnableUserForceVerifyEmail && !user.EmailVerified {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeHandler] user \"uid:%d\" has not verified email", user.Uid)
+		return nil, errs.ErrEmailIsNotVerified
+	}
+
+	oldTokenClaims := c.GetTokenClaims()
+	err = a.tokens.DeleteTokenByClaims(c, oldTokenClaims)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeHandler] failed to revoke temporary token \"utid:%s\" for user \"uid:%d\", because %s", oldTokenClaims.UserTokenId, user.Uid, err.Error())
+	}
+
+	token, claims, err := a.tokens.CreateToken(c, user)
+
+	if err != nil {
+		log.Errorf(c, "[authorizations.TwoFactorAuthorizeHandler] failed to create token for user \"uid:%d\", because %s", user.Uid, err.Error())
+		return nil, errs.ErrTokenGenerating
+	}
+
+	c.SetTextualToken(token)
+	c.SetTokenClaims(claims)
+	c.SetTokenContext("")
+
+	userApplicationCloudSettings, err := a.userAppCloudSettings.GetUserApplicationCloudSettingsByUid(c, user.Uid)
+	var applicationCloudSettingSlice *models.ApplicationCloudSettingSlice = nil
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeHandler] failed to get latest user application cloud settings for user \"uid:%d\", because %s", user.Uid, err.Error())
+	} else if userApplicationCloudSettings != nil && len(userApplicationCloudSettings.Settings) > 0 {
+		applicationCloudSettingSlice = &userApplicationCloudSettings.Settings
+	}
+
+	log.Infof(c, "[authorizations.TwoFactorAuthorizeHandler] user \"uid:%d\" has authorized two-factor via passcode, token will be expired at %d", user.Uid, claims.ExpiresAt)
+
+	authResp := a.getAuthResponse(c, token, false, user, applicationCloudSettingSlice)
+	return authResp, nil
+}
+
+// TwoFactorAuthorizeByRecoveryCodeHandler verifies and authorizes current 2fa login by recovery code
+func (a *AuthorizationsApi) TwoFactorAuthorizeByRecoveryCodeHandler(c *core.WebContext) (any, *errs.Error) {
+	if !a.CurrentConfig().EnableInternalAuth {
+		return nil, errs.ErrCannotLoginByPassword
+	}
+
+	var credential models.TwoFactorRecoveryCodeLoginRequest
+	err := c.ShouldBindJSON(&credential)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] parse request failed, because %s", err.Error())
+		return nil, errs.ErrTwoFactorRecoveryCodeInvalid
+	}
+
+	uid := c.GetCurrentUid()
+	err = a.CheckFailureCount(c, uid)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] cannot auth for user \"uid:%d\", because %s", uid, err.Error())
+		return nil, errs.Or(err, errs.ErrFailureCountLimitReached)
+	}
+
+	enableTwoFactor, err := a.twoFactorAuthorizations.ExistsTwoFactorSetting(c, uid)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] failed to get two-factor setting for user \"uid:%d\", because %s", uid, err.Error())
+		return nil, errs.Or(err, errs.ErrSystemError)
+	}
+
+	if !enableTwoFactor {
+		return nil, errs.ErrTwoFactorIsNotEnabled
+	}
+
+	user, err := a.users.GetUserById(c, uid)
+
+	if err != nil {
+		log.Errorf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] failed to get user \"uid:%d\" info, because %s", uid, err.Error())
+		return nil, errs.ErrUserNotFound
+	}
+
+	if user.Disabled {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] user \"uid:%d\" is disabled", user.Uid)
+		return nil, errs.ErrUserIsDisabled
+	}
+
+	if a.CurrentConfig().EnableUserForceVerifyEmail && !user.EmailVerified {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] user \"uid:%d\" has not verified email", user.Uid)
+		return nil, errs.ErrEmailIsNotVerified
+	}
+
+	err = a.twoFactorAuthorizations.GetAndUseUserTwoFactorRecoveryCode(c, uid, credential.RecoveryCode, user.Salt)
+
+	if errs.IsCustomError(err) {
+		failureCheckErr := a.CheckAndIncreaseFailureCount(c, uid)
+
+		if failureCheckErr != nil {
+			log.Warnf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] cannot auth for user \"uid:%d\", because %s", uid, failureCheckErr.Error())
+			return nil, errs.Or(failureCheckErr, errs.ErrFailureCountLimitReached)
+		}
+	}
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] failed to get two-factor recovery code for user \"uid:%d\", because %s", uid, err.Error())
+		return nil, errs.Or(err, errs.ErrTwoFactorRecoveryCodeNotExist)
+	}
+
+	oldTokenClaims := c.GetTokenClaims()
+	err = a.tokens.DeleteTokenByClaims(c, oldTokenClaims)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] failed to revoke temporary token \"utid:%s\" for user \"uid:%d\", because %s", oldTokenClaims.UserTokenId, user.Uid, err.Error())
+	}
+
+	token, claims, err := a.tokens.CreateToken(c, user)
+
+	if err != nil {
+		log.Errorf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] failed to create token for user \"uid:%d\", because %s", user.Uid, err.Error())
+		return nil, errs.ErrTokenGenerating
+	}
+
+	c.SetTextualToken(token)
+	c.SetTokenClaims(claims)
+	c.SetTokenContext("")
+
+	userApplicationCloudSettings, err := a.userAppCloudSettings.GetUserApplicationCloudSettingsByUid(c, user.Uid)
+	var applicationCloudSettingSlice *models.ApplicationCloudSettingSlice = nil
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] failed to get latest user application cloud settings for user \"uid:%d\", because %s", user.Uid, err.Error())
+	} else if userApplicationCloudSettings != nil && len(userApplicationCloudSettings.Settings) > 0 {
+		applicationCloudSettingSlice = &userApplicationCloudSettings.Settings
+	}
+
+	log.Infof(c, "[authorizations.TwoFactorAuthorizeByRecoveryCodeHandler] user \"uid:%d\" has authorized two-factor via recovery code \"%s\", token will be expired at %d", user.Uid, credential.RecoveryCode, claims.ExpiresAt)
+
+	authResp := a.getAuthResponse(c, token, false, user, applicationCloudSettingSlice)
+	return authResp, nil
+}
+
+// OAuth2CallbackAuthorizeHandler verifies and authorizes current OAuth 2.0 callback login
+func (a *AuthorizationsApi) OAuth2CallbackAuthorizeHandler(c *core.WebContext) (any, *errs.Error) {
+	if !a.CurrentConfig().EnableOAuth2Login {
+		return nil, errs.ErrOAuth2NotEnabled
+	}
+
+	var credential models.OAuth2CallbackLoginRequest
+	err := c.ShouldBindJSON(&credential)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] parse request failed, because %s", err.Error())
+		return nil, errs.NewIncompleteOrIncorrectSubmissionError(err)
+	}
+
+	var tokenContext models.OAuth2CallbackTokenContext
+	err = json.Unmarshal([]byte(c.GetTokenContext()), &tokenContext)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] parse token context failed, because %s", err.Error())
+		return nil, errs.ErrOperationFailed
+	}
+
+	if !tokenContext.ExternalAuthType.IsValid() {
+		log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] external auth type \"%s\" is invalid", tokenContext.ExternalAuthType)
+		return nil, errs.ErrInvalidOAuth2Provider
+	}
+
+	uid := c.GetCurrentUid()
+	err = a.CheckFailureCount(c, uid)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] cannot auth for user \"uid:%d\", because %s", uid, err.Error())
+		return nil, errs.Or(err, errs.ErrFailureCountLimitReached)
+	}
+
+	user, err := a.users.GetUserById(c, uid)
+
+	if err != nil {
+		log.Errorf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] failed to get user \"uid:%d\" info, because %s", uid, err.Error())
+		return nil, errs.ErrUserNotFound
+	}
+
+	if user.Disabled {
+		log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] user \"uid:%d\" is disabled", user.Uid)
+		return nil, errs.ErrUserIsDisabled
+	}
+
+	if a.CurrentConfig().EnableUserForceVerifyEmail && !user.EmailVerified {
+		log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] user \"uid:%d\" has not verified email", user.Uid)
+		return nil, errs.ErrEmailIsNotVerified
+	}
+
+	oldTokenClaims := c.GetTokenClaims()
+
+	if oldTokenClaims.Type == core.USER_TOKEN_TYPE_OAUTH2_CALLBACK_REQUIRE_VERIFY {
+		if credential.Password == "" {
+			return nil, errs.ErrPasswordIsEmpty
+		}
+
+		if !a.users.IsPasswordEqualsUserPassword(credential.Password, user) {
+			failureCheckErr := a.CheckAndIncreaseFailureCount(c, uid)
+
+			if failureCheckErr != nil {
+				log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] cannot login for user \"uid:%d\", because %s", user.Uid, failureCheckErr.Error())
+				return nil, errs.Or(failureCheckErr, errs.ErrFailureCountLimitReached)
+			}
+
+			return nil, errs.ErrUserPasswordWrong
+		}
+
+		if a.CurrentConfig().EnableTwoFactor {
+			twoFactorSetting, err := a.twoFactorAuthorizations.GetUserTwoFactorSettingByUid(c, uid)
+
+			if err != nil && !errors.Is(err, errs.ErrTwoFactorIsNotEnabled) {
+				log.Errorf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] failed to check two-factor setting for user \"uid:%d\", because %s", user.Uid, err.Error())
+				return nil, errs.Or(err, errs.ErrSystemError)
+			}
+
+			if twoFactorSetting != nil {
+				if credential.Passcode == "" {
+					return nil, errs.ErrPasscodeEmpty
+				}
+
+				passcodeUsed, passcodeHash := a.is2FAPasscodeUsed(c, uid, credential.Passcode)
+
+				if passcodeUsed {
+					return nil, errs.ErrPasscodeInvalid
+				}
+
+				if !totp.Validate(credential.Passcode, twoFactorSetting.Secret) {
+					log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] passcode is invalid for user \"uid:%d\"", uid)
+
+					err = a.CheckAndIncreaseFailureCount(c, uid)
+
+					if err != nil {
+						log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] cannot auth for user \"uid:%d\", because %s", uid, err.Error())
+						return nil, errs.Or(err, errs.ErrFailureCountLimitReached)
+					}
+
+					return nil, errs.ErrPasscodeInvalid
+				}
+
+				a.update2FAPasscodeUsed(c, uid, passcodeHash)
+			}
+		}
+
+		userExternalAuth := &models.UserExternalAuth{
+			Uid:              user.Uid,
+			ExternalAuthType: tokenContext.ExternalAuthType,
+			ExternalUsername: tokenContext.ExternalUsername,
+			ExternalEmail:    tokenContext.ExternalEmail,
+		}
+
+		err = a.userExternalAuths.CreateUserExternalAuth(c, userExternalAuth)
+
+		if err != nil {
+			log.Errorf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] failed to create user external auth for user \"uid:%d\", because %s", user.Uid, err.Error())
+			return nil, errs.Or(err, errs.ErrOperationFailed)
+		}
+
+		log.Infof(c, "[authorizations.OAuth2CallbackAuthorizeHandler] user external auth has been created for user \"uid:%d\"", user.Uid)
+	} else if oldTokenClaims.Type == core.USER_TOKEN_TYPE_OAUTH2_CALLBACK {
+		_, err = a.userExternalAuths.GetUserExternalAuthByUid(c, uid, tokenContext.ExternalAuthType)
+
+		if err != nil {
+			log.Errorf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] failed to get user external auth for user \"uid:%d\", because %s", uid, err.Error())
+			return nil, errs.Or(err, errs.ErrUserExternalAuthNotFound)
+		}
+	} else {
+		return nil, errs.ErrSystemError
+	}
+
+	err = a.tokens.DeleteTokenByClaims(c, oldTokenClaims)
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] failed to revoke temporary token \"utid:%s\" for user \"uid:%d\", because %s", oldTokenClaims.UserTokenId, user.Uid, err.Error())
+	}
+
+	var token string
+	var claims *core.UserTokenClaims
+
+	if credential.Token != "" {
+		_, claims, _, err = a.tokens.ParseToken(c, credential.Token)
+
+		if err != nil {
+			log.Errorf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] failed to parse token, because %s", err.Error())
+			return nil, errs.ErrInvalidToken
+		}
+
+		if claims.Uid != user.Uid {
+			log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] oauth 2.0 user \"uid:%d\" does not match current user \"uid:%d\"", user.Uid, claims.Uid)
+			token = ""
+			claims = nil
+		} else {
+			token = credential.Token
+		}
+	}
+
+	if token == "" {
+		token, claims, err = a.tokens.CreateToken(c, user)
+
+		if err != nil {
+			log.Errorf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] failed to create token for user \"uid:%d\", because %s", user.Uid, err.Error())
+			return nil, errs.ErrTokenGenerating
+		}
+	}
+
+	c.SetTextualToken(token)
+	c.SetTokenClaims(claims)
+	c.SetTokenContext("")
+
+	userApplicationCloudSettings, err := a.userAppCloudSettings.GetUserApplicationCloudSettingsByUid(c, user.Uid)
+	var applicationCloudSettingSlice *models.ApplicationCloudSettingSlice = nil
+
+	if err != nil {
+		log.Warnf(c, "[authorizations.OAuth2CallbackAuthorizeHandler] failed to get latest user application cloud settings for user \"uid:%d\", because %s", user.Uid, err.Error())
+	} else if userApplicationCloudSettings != nil && len(userApplicationCloudSettings.Settings) > 0 {
+		applicationCloudSettingSlice = &userApplicationCloudSettings.Settings
+	}
+
+	log.Infof(c, "[authorizations.OAuth2CallbackAuthorizeHandler] user \"uid:%d\" has logged in, token will be expired at %d", user.Uid, claims.ExpiresAt)
+
+	authResp := a.getAuthResponse(c, token, false, user, applicationCloudSettingSlice)
+	return authResp, nil
+}
+
+func (a *AuthorizationsApi) getAuthResponse(c *core.WebContext, token string, need2FA bool, user *models.User, applicationCloudSettings *models.ApplicationCloudSettingSlice) *models.AuthResponse {
+	return &models.AuthResponse{
+		Token:                    token,
+		Need2FA:                  need2FA,
+		User:                     a.GetUserBasicInfo(user),
+		ApplicationCloudSettings: applicationCloudSettings,
+		NotificationContent:      a.GetAfterLoginNotificationContent(user.Language, c.GetClientLocale()),
+	}
+}
+
+func (a *AuthorizationsApi) is2FAPasscodeUsed(c *core.WebContext, uid int64, passcode string) (bool, string) {
+	passcodeHash := utils.MD5EncodeToStringWithUidAndSalt([]byte(passcode), uid, a.CurrentConfig().SecretKey)
+	found, remark := a.GetSubmissionRemark(duplicatechecker.DUPLICATE_CHECKER_TYPE_2FA_PASSCODE, uid, passcodeHash)
+
+	if found {
+		log.Warnf(c, "[authorizations.is2FAPasscodeUsed] passcode \"%s\" has been used for user \"uid:%d\" in unix timestamp %s", passcode, uid, remark)
+		return true, passcodeHash
+	}
+
+	return false, passcodeHash
+}
+
+func (a *AuthorizationsApi) update2FAPasscodeUsed(c *core.WebContext, uid int64, passcodeHash string) {
+	a.SetSubmissionRemarkWithCustomExpiration(duplicatechecker.DUPLICATE_CHECKER_TYPE_2FA_PASSCODE, uid, passcodeHash, utils.Int64ToString(time.Now().Unix()), 30*time.Second)
+}

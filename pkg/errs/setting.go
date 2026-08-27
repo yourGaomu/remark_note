@@ -1,0 +1,34 @@
+package errs
+
+import "net/http"
+
+// Error codes related to settings
+var (
+	ErrInvalidServerMode                              = NewSystemError(SystemSubcategorySetting, 0, http.StatusInternalServerError, "invalid server mode")
+	ErrInvalidProtocol                                = NewSystemError(SystemSubcategorySetting, 1, http.StatusInternalServerError, "invalid server protocol")
+	ErrInvalidLogMode                                 = NewSystemError(SystemSubcategorySetting, 2, http.StatusInternalServerError, "invalid log mode")
+	ErrInvalidLogLevel                                = NewSystemError(SystemSubcategorySetting, 3, http.StatusInternalServerError, "invalid log level")
+	ErrGettingLocalAddress                            = NewSystemError(SystemSubcategorySetting, 4, http.StatusInternalServerError, "failed to get local address")
+	ErrInvalidStorageType                             = NewSystemError(SystemSubcategorySetting, 5, http.StatusInternalServerError, "invalid storage type")
+	ErrInvalidLocalFileSystemStoragePath              = NewSystemError(SystemSubcategorySetting, 6, http.StatusInternalServerError, "invalid local file system storage path")
+	ErrInvalidUuidMode                                = NewSystemError(SystemSubcategorySetting, 7, http.StatusInternalServerError, "invalid uuid mode")
+	ErrInvalidDuplicateCheckerType                    = NewSystemError(SystemSubcategorySetting, 8, http.StatusInternalServerError, "invalid duplicate checker type")
+	ErrInvalidInMemoryDuplicateCheckerCleanupInterval = NewSystemError(SystemSubcategorySetting, 9, http.StatusInternalServerError, "invalid in-memory duplicate checker cleanup interval")
+	ErrInvalidTokenExpiredTime                        = NewSystemError(SystemSubcategorySetting, 10, http.StatusInternalServerError, "invalid token expired time")
+	ErrInvalidTokenMinRefreshInterval                 = NewSystemError(SystemSubcategorySetting, 11, http.StatusInternalServerError, "invalid token min refresh interval")
+	ErrInvalidTemporaryTokenExpiredTime               = NewSystemError(SystemSubcategorySetting, 12, http.StatusInternalServerError, "invalid temporary token expired time")
+	ErrInvalidEmailVerifyTokenExpiredTime             = NewSystemError(SystemSubcategorySetting, 13, http.StatusInternalServerError, "invalid email verify token expired time")
+	ErrInvalidAvatarProvider                          = NewSystemError(SystemSubcategorySetting, 14, http.StatusInternalServerError, "invalid avatar provider")
+	ErrInvalidMapProvider                             = NewSystemError(SystemSubcategorySetting, 15, http.StatusInternalServerError, "invalid map provider")
+	ErrInvalidAmapSecurityVerificationMethod          = NewSystemError(SystemSubcategorySetting, 16, http.StatusInternalServerError, "invalid amap security verification method")
+	ErrInvalidPasswordResetTokenExpiredTime           = NewSystemError(SystemSubcategorySetting, 17, http.StatusInternalServerError, "invalid password reset token expired time")
+	ErrInvalidExchangeRatesDataSource                 = NewSystemError(SystemSubcategorySetting, 18, http.StatusInternalServerError, "invalid exchange rates data source")
+	ErrInvalidIpAddressPattern                        = NewSystemError(SystemSubcategorySetting, 19, http.StatusInternalServerError, "invalid ip address pattern")
+	ErrInvalidLLMProvider                             = NewSystemError(SystemSubcategorySetting, 20, http.StatusInternalServerError, "invalid llm provider")
+	ErrInvalidLLMModelId                              = NewSystemError(SystemSubcategorySetting, 21, http.StatusInternalServerError, "invalid llm model id")
+	ErrInvalidOAuth2Config                            = NewSystemError(SystemSubcategorySetting, 22, http.StatusInternalServerError, "invalid oauth 2.0 config")
+	ErrInvalidOAuth2UserIdentifier                    = NewSystemError(SystemSubcategorySetting, 23, http.StatusInternalServerError, "invalid oauth 2.0 user identifier")
+	ErrInvalidOAuth2Provider                          = NewSystemError(SystemSubcategorySetting, 24, http.StatusInternalServerError, "invalid oauth 2.0 provider")
+	ErrInvalidOAuth2StateExpiredTime                  = NewSystemError(SystemSubcategorySetting, 25, http.StatusInternalServerError, "invalid oauth 2.0 state expired time")
+	ErrInvalidLLMThinkingLevel                        = NewSystemError(SystemSubcategorySetting, 26, http.StatusInternalServerError, "invalid llm thinking level")
+)

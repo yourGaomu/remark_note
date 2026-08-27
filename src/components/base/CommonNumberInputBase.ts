@@ -1,0 +1,218 @@
+import { ref, computed } from 'vue';
+
+import { useI18n } from '@/locales/helpers.ts';
+
+import { NumeralSystem } from '@/core/numeral.ts';
+
+import { removeAll } from '@/lib/common.ts';
+import logger from '@/lib/logger.ts';
+
+export interface CommonNumberInputProps {
+    label?: string;
+    placeholder?: string;
+    disabled?: boolean;
+    readonly?: boolean;
+    modelValue: number;
+}
+
+export interface CommonNumberInputEmits {
+    (e: 'update:modelValue', value: number): void;
+    (e: 'enter'): void;
+}
+
+export type ParseNumberFunction = (value: string) => number;
+export type FormatNumberFunction = (value: number) => string;
+export type GetValidFormattedValueFunction = (value: number, textualValue: string, hasDecimalSeparator: boolean) => string;
+
+export function useCommonNumberInputBase(props: CommonNumberInputProps, emit: CommonNumberInputEmits, maxDecimalCount: number, initValue: string, parseNumber: ParseNumberFunction, formatNumber: FormatNumberFunction, getValidFormattedValue: GetValidFormattedValueFunction) {
+    const {
+        getCurrentNumeralSystemType,
+        getCurrentDecimalSeparator,
+        getCurrentDigitGroupingSymbol
+    } = useI18n();
+
+    const currentValue = ref<string>(initValue);
+
+    const numeralSystem = computed<NumeralSystem>(() => getCurrentNumeralSystemType());
+
+    function onKeyUpDown(e: KeyboardEvent): void {
+        if (e.altKey || e.ctrlKey || e.metaKey || (e.key.indexOf('F') === 0 && (e.key.length === 2 || e.key.length === 3))
+            || e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+            || e.key === 'Home' || e.key === 'End' || e.key === 'Tab'
+            || e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Del') {
+            return;
+        }
+
+        if (props.readonly || props.disabled) {
+            e.preventDefault();
+            return;
+        }
+
+        if (e.key === 'Enter') {
+            emit('enter');
+            e.preventDefault();
+            return;
+        }
+
+        const digitGroupingSymbol = getCurrentDigitGroupingSymbol();
+        const decimalSeparator = getCurrentDecimalSeparator();
+
+        if (!NumeralSystem.WesternArabicNumerals.isDigit(e.key) && !numeralSystem.value.isDigit(e.key) && e.key !== '-' && e.key !== decimalSeparator) {
+            e.preventDefault();
+            return;
+        }
+
+        if (maxDecimalCount === 0 && e.key === decimalSeparator) {
+            e.preventDefault();
+            return;
+        }
+
+        if (!e.target) {
+            return;
+        }
+
+        const target = e.target as HTMLInputElement;
+
+        let str = target.value;
+
+        if (str.indexOf(digitGroupingSymbol) >= 0) {
+            str = removeAll(str, digitGroupingSymbol);
+        }
+
+        if (e.key === '-' && str.lastIndexOf('-') > 0) {
+            const lastMinusPos = str.lastIndexOf('-');
+            target.value = str.substring(0, lastMinusPos) + str.substring(lastMinusPos + 1, str.length);
+            currentValue.value = target.value;
+            e.preventDefault();
+            return;
+        }
+
+        if (e.key === decimalSeparator && str.indexOf(decimalSeparator) !== str.lastIndexOf(decimalSeparator)) {
+            const lastDecimalSeparatorPos = str.lastIndexOf(decimalSeparator);
+            target.value = str.substring(0, lastDecimalSeparatorPos) + str.substring(lastDecimalSeparatorPos + 1, str.length);
+            currentValue.value = target.value;
+            e.preventDefault();
+            return;
+        }
+
+        if (e.key === decimalSeparator && (str.indexOf(decimalSeparator) === 0 || (str.indexOf(decimalSeparator) === 1 && str.charAt(0) === '-'))) {
+            const negative = str.charAt(0) === '-';
+
+            if (negative) {
+                str = str.substring(1);
+            }
+
+            str = (negative ? `-${numeralSystem.value.digitZero}` : numeralSystem.value.digitZero) + str;
+            target.value = str;
+            currentValue.value = target.value;
+            e.preventDefault();
+            return;
+        }
+
+        let decimalLength = 0;
+        const decimalIndex = str.indexOf(decimalSeparator);
+
+        if (decimalIndex >= 0) {
+            decimalLength = str.length - str.indexOf(decimalSeparator) - 1;
+        } else if ((str.startsWith(numeralSystem.value.digitZero) && str.length >= 2) || (str.startsWith(`-${numeralSystem.value.digitZero}`) && str.length >= 3)) {
+            const negative = str.charAt(0) === '-';
+
+            if (negative) {
+                str = str.substring(1);
+            }
+
+            while (str.charAt(0) === numeralSystem.value.digitZero && (str.length >= 2 || e.key !== numeralSystem.value.digitZero)) {
+                str = str.substring(1);
+            }
+
+            target.value = (negative ? '-' : '') + str;
+            currentValue.value = target.value;
+            e.preventDefault();
+            return;
+        }
+
+        if (maxDecimalCount > 0 && decimalLength > maxDecimalCount) {
+            target.value = str.substring(0, Math.min(decimalIndex + maxDecimalCount + 1, str.length - 1));
+            currentValue.value = target.value;
+            e.preventDefault();
+            return;
+        } else if (maxDecimalCount === 0 && decimalIndex >= 0) {
+            target.value = str.substring(0, decimalIndex);
+            currentValue.value = target.value;
+            e.preventDefault();
+            return;
+        }
+
+        try {
+            const val = parseNumber(str);
+            const finalValue = getValidFormattedValue(val, str, decimalIndex >= 0);
+
+            if (finalValue !== str) {
+                target.value = finalValue;
+                currentValue.value = finalValue;
+                e.preventDefault();
+            }
+        } catch (ex) {
+            logger.warn('cannot parse input number, original value is ' + str, ex);
+            target.value = numeralSystem.value.digitZero;
+        }
+    }
+
+    function onPaste(e: ClipboardEvent): void {
+        if (!e.clipboardData || props.readonly || props.disabled) {
+            e.preventDefault();
+            return;
+        }
+
+        const text = e.clipboardData.getData('Text');
+
+        if (!text) {
+            e.preventDefault();
+            return;
+        }
+
+        const parsedText = parseNumber(text);
+
+        if (Number.isNaN(parsedText) || !Number.isFinite(parsedText)) {
+            e.preventDefault();
+            return;
+        }
+
+        const inputEl = e.target as HTMLInputElement;
+        const start = inputEl.selectionStart ?? 0;
+        const end = inputEl.selectionEnd ?? 0;
+        const fullText = currentValue.value.slice(0, start) + text + currentValue.value.slice(end);
+
+        const value = parseNumber(fullText);
+        const textualValue = formatNumber(value);
+        const decimalSeparator = getCurrentDecimalSeparator();
+        const hasDecimalSeparator = fullText.indexOf(decimalSeparator) >= 0;
+        const pastedAmount = getValidFormattedValue(value, textualValue, hasDecimalSeparator);
+        let newPos: number = start + text.length;
+
+        if (pastedAmount.length !== fullText.length) {
+            if (newPos > pastedAmount.length) {
+                newPos = pastedAmount.length;
+            } else {
+                newPos = start;
+            }
+        }
+
+        if (window.requestAnimationFrame) {
+            window.requestAnimationFrame(() => {
+                inputEl.selectionStart = inputEl.selectionEnd = newPos;
+            });
+        }
+
+        currentValue.value = pastedAmount;
+        e.preventDefault();
+    }
+
+    return {
+        // states
+        currentValue,
+        // functions
+        onKeyUpDown,
+        onPaste
+    };
+}

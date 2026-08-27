@@ -1,0 +1,237 @@
+<template>
+    <v-select
+        persistent-placeholder
+        :readonly="readonly"
+        :disabled="disabled"
+        :label="label"
+        :menu-props="{ contentClass: 'schedule-frequency-select-menu' }"
+        v-model="frequencyType"
+        v-model:menu="menuState"
+        @update:menu="onMenuStateChanged"
+    >
+        <template #selection>
+            <span class="text-truncate cursor-pointer">{{ displayFrequency }}</span>
+        </template>
+
+        <template #no-data>
+            <div ref="dropdownMenu" class="schedule-frequency-container">
+                <div class="schedule-frequency-type-container">
+                    <v-list>
+                        <v-list-item :class="{ 'v-list-item--active text-primary': type.type === frequencyType }"
+                                     :key="type.type" :title="type.displayName"
+                                     v-for="type in allTransactionScheduledFrequencyTypes"
+                                     @click="frequencyType = type.type">
+                        </v-list-item>
+                    </v-list>
+                </div>
+                <div class="schedule-frequency-value-container">
+                    <v-list v-if="frequencyType === ScheduledTemplateFrequencyType.Disabled.type">
+                        <v-list-item :title="tt('None')"></v-list-item>
+                    </v-list>
+                    <v-list v-if="frequencyType === ScheduledTemplateFrequencyType.Daily.type">
+                        <v-list-item :title="tt('Daily')"></v-list-item>
+                    </v-list>
+                    <v-list select-strategy="single-leaf" v-model:selected="frequencyValue"
+                            v-else-if="frequencyType === ScheduledTemplateFrequencyType.EveryNDays.type">
+                        <v-list-item :key="n.type" :value="n.type" :title="n.displayName"
+                                     :class="{ 'frequency-value-selected v-list-item--active text-primary': isFrequencyValueSelected(n.type) }"
+                                     v-for="n in allAvailableNDays">
+                            <template #prepend="{ isSelected, select }">
+                                <v-list-item-action start>
+                                    <v-checkbox-btn density="compact" :model-value="isSelected" @update:model-value="select"></v-checkbox-btn>
+                                </v-list-item-action>
+                            </template>
+                        </v-list-item>
+                    </v-list>
+                    <v-list select-strategy="classic" v-model:selected="frequencyValue"
+                            v-else-if="frequencyType === ScheduledTemplateFrequencyType.Weekly.type">
+                        <v-list-item :key="weekDay.type" :value="weekDay.type" :title="weekDay.displayName"
+                                     :class="{ 'frequency-value-selected v-list-item--active text-primary': isFrequencyValueSelected(weekDay.type) }"
+                                     v-for="weekDay in allWeekDays">
+                            <template #prepend="{ isSelected, select }">
+                                <v-list-item-action start>
+                                    <v-checkbox-btn density="compact" :model-value="isSelected" @update:model-value="select"></v-checkbox-btn>
+                                </v-list-item-action>
+                            </template>
+                        </v-list-item>
+                    </v-list>
+                    <v-list select-strategy="classic" v-model:selected="frequencyValue"
+                            v-else-if="frequencyType === ScheduledTemplateFrequencyType.Monthly.type">
+                        <v-list-item :key="monthDay.type" :value="monthDay.type" :title="monthDay.displayName"
+                                     :class="{ 'frequency-value-selected v-list-item--active text-primary': isFrequencyValueSelected(monthDay.type) }"
+                                     v-for="monthDay in allAvailableMonthDays">
+                            <template #prepend="{ isSelected, select }">
+                                <v-list-item-action start>
+                                    <v-checkbox-btn density="compact" :model-value="isSelected" @update:model-value="select"></v-checkbox-btn>
+                                </v-list-item-action>
+                            </template>
+                        </v-list-item>
+                    </v-list>
+                    <v-list select-strategy="classic" v-model:selected="frequencyValue"
+                            v-else-if="frequencyType === ScheduledTemplateFrequencyType.Yearly.type">
+                        <v-list-item :key="monthAndDay.type" :value="monthAndDay.type" :title="monthAndDay.displayName"
+                                     :class="{ 'frequency-value-selected v-list-item--active text-primary': isFrequencyValueSelected(monthAndDay.type) }"
+                                     v-for="monthAndDay in allAvailableMonthAndDays">
+                            <template #prepend="{ isSelected, select }">
+                                <v-list-item-action start>
+                                    <v-checkbox-btn density="compact" :model-value="isSelected" @update:model-value="select"></v-checkbox-btn>
+                                </v-list-item-action>
+                            </template>
+                        </v-list-item>
+                    </v-list>
+                </div>
+            </div>
+        </template>
+    </v-select>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, nextTick, useTemplateRef } from 'vue';
+
+import { useI18n } from '@/locales/helpers.ts';
+import { type CommonScheduleFrequencySelectionProps, useScheduleFrequencySelectionBase } from '@/components/base/ScheduleFrequencySelectionBase.ts';
+
+import { useUserStore } from '@/stores/user.ts';
+
+import { type WeekDayValue } from '@/core/datetime.ts';
+import { ScheduledTemplateFrequencyType } from '@/core/template.ts';
+import { sortNumbersArray } from '@/lib/common.ts';
+import { scrollToSelectedItem } from '@/lib/ui/common.ts';
+
+const props = defineProps<CommonScheduleFrequencySelectionProps>();
+const emit = defineEmits<{
+    (e: 'update:type', value: number): void;
+    (e: 'update:modelValue', value: string): void;
+}>();
+
+const {
+    tt,
+    getMultiMonthAndDayLongNames,
+    getMultiMonthdayShortNames,
+    getMultiWeekdayLongNames
+} = useI18n();
+const {
+    allTransactionScheduledFrequencyTypes,
+    allWeekDays,
+    allAvailableMonthDays,
+    allAvailableMonthAndDays,
+    allAvailableNDays,
+    getFrequencyValues
+} = useScheduleFrequencySelectionBase();
+
+const userStore = useUserStore();
+
+const dropdownMenu = useTemplateRef<HTMLElement>('dropdownMenu');
+
+const menuState = ref<boolean>(false);
+
+const firstDayOfWeek = computed<WeekDayValue>(() => userStore.currentUserFirstDayOfWeek);
+
+const frequencyType = computed<number>({
+    get: () => props.type,
+    set: (value: number) => {
+        if (props.type !== value) {
+            emit('update:type', value);
+
+            if (value === ScheduledTemplateFrequencyType.Daily.type) {
+                frequencyValue.value = [0];
+            } else if (value === ScheduledTemplateFrequencyType.Weekly.type) {
+                frequencyValue.value = [firstDayOfWeek.value];
+            } else if (value === ScheduledTemplateFrequencyType.Monthly.type) {
+                frequencyValue.value = [1];
+            } else if (value === ScheduledTemplateFrequencyType.Yearly.type) {
+                frequencyValue.value = [101];
+            } else if (value === ScheduledTemplateFrequencyType.EveryNDays.type) {
+                frequencyValue.value = [1];
+            } else {
+                frequencyValue.value = [];
+            }
+        }
+    }
+});
+
+const frequencyValue = computed<number[]>({
+    get: () => getFrequencyValues(props.modelValue),
+    set: (value: number[]) => {
+        emit('update:modelValue', sortNumbersArray(value).join(','));
+    }
+});
+
+const displayFrequency = computed<string>(() => {
+    if (frequencyType.value === ScheduledTemplateFrequencyType.Disabled.type) {
+        return tt('Disabled');
+    } else if (frequencyType.value === ScheduledTemplateFrequencyType.Daily.type) {
+        return tt('Daily');
+    } else if (frequencyType.value === ScheduledTemplateFrequencyType.EveryNDays.type) {
+        if (frequencyValue.value.length) {
+            return tt('format.misc.everyNDays', {
+                n: frequencyValue.value[0]
+            });
+        } else {
+            return tt('Every N Days');
+        }
+    } else if (frequencyType.value === ScheduledTemplateFrequencyType.Weekly.type) {
+        if (frequencyValue.value.length) {
+            return tt('format.misc.everyMultiDaysOfWeek', {
+                days: getMultiWeekdayLongNames(frequencyValue.value, firstDayOfWeek.value)
+            });
+        } else {
+            return tt('Weekly');
+        }
+    } else if (frequencyType.value === ScheduledTemplateFrequencyType.Monthly.type) {
+        if (frequencyValue.value.length) {
+            return tt('format.misc.everyMultiDaysOfMonth', {
+                days: getMultiMonthdayShortNames(frequencyValue.value)
+            });
+        } else {
+            return tt('Monthly');
+        }
+    } else if (frequencyType.value === ScheduledTemplateFrequencyType.Yearly.type) {
+        if (frequencyValue.value.length) {
+            return tt('format.misc.everyMultiDaysOfYear', {
+                days: getMultiMonthAndDayLongNames(frequencyValue.value)
+            });
+        } else {
+            return tt('Yearly');
+        }
+    } else {
+        return '';
+    }
+});
+
+function isFrequencyValueSelected(currentValue: number): boolean {
+    return frequencyValue.value.indexOf(currentValue) >= 0;
+}
+
+function onMenuStateChanged(state: boolean): void {
+    if (state) {
+        nextTick(() => {
+            if (dropdownMenu.value && dropdownMenu.value.parentElement) {
+                scrollToSelectedItem(dropdownMenu.value.parentElement, '.schedule-frequency-value-container', '.schedule-frequency-value-container', '.frequency-value-selected');
+            }
+        });
+    }
+}
+</script>
+
+<style>
+.schedule-frequency-select-menu {
+    max-height: inherit !important;
+}
+
+.schedule-frequency-select-menu > .v-list {
+    padding: 0;
+}
+
+.schedule-frequency-select-menu .schedule-frequency-container {
+    width: 100%;
+    display: flex;
+}
+
+.schedule-frequency-select-menu .schedule-frequency-type-container,
+.schedule-frequency-select-menu .schedule-frequency-value-container {
+    width: 100%;
+    max-height: 310px;
+    overflow-y: scroll;
+}
+</style>

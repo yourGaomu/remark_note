@@ -1,0 +1,252 @@
+<template>
+    <div class="layout-wrapper">
+        <router-link to="/">
+            <div class="auth-logo d-flex align-start gap-x-3">
+                <img alt="logo" class="login-page-logo" :src="APPLICATION_LOGO_PATH" />
+                <span class="auth-app-title">{{ tt('global.app.title') }}</span>
+            </div>
+        </router-link>
+        <v-row no-gutters class="auth-wrapper">
+            <v-col cols="12" md="8" class="auth-image-background d-none d-md-flex align-center justify-center position-relative">
+                <auth-illustration variant="connect" />
+            </v-col>
+            <v-col cols="12" md="4" class="auth-card d-flex flex-column">
+                <div class="d-flex align-center justify-center h-100">
+                    <v-card variant="flat" class="w-100 mt-0 px-4 pt-12" max-width="500">
+                        <v-card-text class="py-0">
+                            <div class="text-headline-small mb-2">{{ oauth2LoginDisplayName }}</div>
+                            <div class="auth-message text-body-large mb-0" v-if="!error && !errorMessage && platform && token && !userName">{{ tt('Logging in...') }}</div>
+                            <div class="auth-message text-body-large mb-0" v-else-if="!error && !errorMessage && userName">{{ tt('format.misc.oauth2bindTip', { providerName: oauth2ProviderDisplayName, userName: userName }) }}</div>
+                            <div class="auth-message text-body-large mb-0" v-else-if="error">{{ te({ error }) }}</div>
+                            <div class="auth-message text-body-large mb-0" v-else-if="errorMessage">{{ errorMessage }}</div>
+                            <div class="auth-message text-body-large mb-0" v-else>{{ tt('An error occurred') }}</div>
+                        </v-card-text>
+
+                        <v-card-text class="pb-0 mb-6" v-if="!error && userName">
+                            <v-form>
+                                <v-row>
+                                    <v-col cols="12">
+                                        <v-text-field
+                                            type="password"
+                                            autocomplete="password"
+                                            :autofocus="true"
+                                            :disabled="show2faInput || loggingInByOAuth2"
+                                            :label="tt('Password')"
+                                            :placeholder="tt('Your password')"
+                                            v-model="password"
+                                            @keyup.enter="verifyAndLogin"
+                                        />
+                                    </v-col>
+
+                                    <v-col cols="12" v-show="show2faInput">
+                                        <v-text-field
+                                            type="number"
+                                            autocomplete="one-time-code"
+                                            ref="passcodeInput"
+                                            :disabled="loggingInByOAuth2"
+                                            :label="tt('Passcode')"
+                                            :placeholder="tt('Passcode')"
+                                            v-model="passcode"
+                                            @keyup.enter="verifyAndLogin"
+                                        />
+                                    </v-col>
+
+                                    <v-col cols="12">
+                                        <v-btn block type="submit" :disabled="!password || loggingInByOAuth2" @click="verifyAndLogin">
+                                            {{ tt('Continue') }}
+                                            <v-progress-circular indeterminate size="22" class="ms-2" v-if="loggingInByOAuth2"></v-progress-circular>
+                                        </v-btn>
+                                    </v-col>
+
+                                    <v-col cols="12">
+                                        <router-link class="d-flex align-center justify-center mt-2" to="/login"
+                                                     :class="{ 'disabled': loggingInByOAuth2 }">
+                                            <v-icon class="icon-with-direction" :icon="mdiChevronLeft"/>
+                                            <span class="text-body-medium">{{ tt('Back to login page') }}</span>
+                                        </router-link>
+                                    </v-col>
+                                </v-row>
+                            </v-form>
+                        </v-card-text>
+                    </v-card>
+                </div>
+                <v-spacer/>
+                <div class="d-flex align-center justify-center">
+                    <v-card variant="flat" class="w-100 px-4 pb-3" max-width="500">
+                        <v-card-text class="pt-0">
+                            <div class="text-center">
+                                <language-select-button :disabled="loggingInByOAuth2" />
+                            </div>
+
+                            <v-divider class="mt-2 mb-3" />
+
+                            <div class="auth-powered-by text-center">
+                                <span>Powered by </span>
+                                <a href="https://github.com/mayswind/ezbookkeeping" target="_blank">ezBookkeeping</a>&nbsp;<span>{{ version }}</span>
+                            </div>
+                        </v-card-text>
+                    </v-card>
+                </div>
+            </v-col>
+        </v-row>
+
+        <snack-bar ref="snackbar" />
+    </div>
+</template>
+
+<script setup lang="ts">
+import { VTextField } from 'vuetify/components/VTextField';
+import SnackBar from '@/components/desktop/SnackBar.vue';
+
+import { ref, computed, useTemplateRef, nextTick } from 'vue';
+import { useRouter } from 'vue-router';
+
+import { useI18n } from '@/locales/helpers.ts';
+import { useLoginPageBase } from '@/views/base/LoginPageBase.ts';
+
+import { useRootStore } from '@/stores/index.ts';
+
+import { type ErrorResponse, buildErrorResponse } from '@/core/api.ts';
+import { APPLICATION_LOGO_PATH } from '@/consts/asset.ts';
+import { KnownErrorCode } from '@/consts/api.ts';
+
+import { navigateToHomePage } from '@/lib/web.ts';
+import {
+    isUserVerifyEmailEnabled,
+    getOIDCCustomDisplayNames
+} from '@/lib/server_settings.ts';
+
+import {
+    mdiChevronLeft
+} from '@mdi/js';
+
+type SnackBarType = InstanceType<typeof SnackBar>;
+
+const props = defineProps<{
+    token?: string;
+    provider?: string;
+    platform?: string;
+    userName?: string;
+    errorCode?: string;
+    errorMessage?: string;
+}>();
+
+const router = useRouter();
+
+const {
+    tt,
+    te,
+    getLocalizedOAuth2ProviderName,
+    getLocalizedOAuth2LoginText
+} = useI18n();
+
+const rootStore = useRootStore();
+
+const {
+    version,
+    password,
+    loggingInByOAuth2,
+    doAfterLogin
+} = useLoginPageBase('desktop');
+
+const passcodeInput = useTemplateRef<VTextField>('passcodeInput');
+const snackbar = useTemplateRef<SnackBarType>('snackbar');
+
+const passcode = ref<string>('');
+const show2faInput = ref<boolean>(false);
+
+const oauth2ProviderDisplayName = computed<string>(() => getLocalizedOAuth2ProviderName(props.provider ?? '', getOIDCCustomDisplayNames()));
+const oauth2LoginDisplayName = computed<string>(() => getLocalizedOAuth2LoginText(props.provider ?? '', getOIDCCustomDisplayNames()));
+
+const error = computed<ErrorResponse | undefined>(() => {
+    if (props.errorCode && props.errorMessage) {
+        return buildErrorResponse(parseInt(props.errorCode), props.errorMessage);
+    } else {
+        return undefined;
+    }
+});
+
+const inputProblemMessage = computed<string | null>(() => {
+    if (!password.value) {
+        return 'Password cannot be blank';
+    } else {
+        return null;
+    }
+});
+
+function navigateToHome(): void {
+    if (props.platform === 'desktop') {
+        navigateToHomePage('desktop');
+    } else if (props.platform === 'mobile') {
+        navigateToHomePage('mobile');
+    } else {
+        router.replace('/');
+    }
+}
+
+function verifyAndLogin(): void  {
+    const problemMessage = inputProblemMessage.value;
+
+    if (problemMessage) {
+        snackbar.value?.showMessage(problemMessage);
+        return;
+    }
+
+    loggingInByOAuth2.value = true;
+
+    rootStore.authorizeOAuth2({
+        password: password.value,
+        passcode: passcode.value,
+        callbackToken: props.token || ''
+    }).then(authResponse => {
+        loggingInByOAuth2.value = false;
+        doAfterLogin(authResponse);
+        navigateToHome();
+    }).catch(error => {
+        loggingInByOAuth2.value = false;
+
+        if (isUserVerifyEmailEnabled() && error.error && error.error.errorCode === KnownErrorCode.UserEmailNotVerified && error.error.context && error.error.context.email) {
+            router.push(`/verify_email?email=${encodeURIComponent(error.error.context.email)}&emailSent=${error.error.context.hasValidEmailVerifyToken || false}`);
+            return;
+        } else if (error.error && error.error.errorCode === KnownErrorCode.TwoFactorAuthorizationPasscodeEmpty) {
+            show2faInput.value = true;
+
+            nextTick(() => {
+                if (passcodeInput.value) {
+                    passcodeInput.value.focus();
+                    passcodeInput.value.select();
+                }
+            });
+
+            return;
+        }
+
+        if (!error.processed) {
+            snackbar.value?.showError(error);
+        }
+    });
+}
+
+if (!error.value && props.platform && props.token && !props.userName) {
+    loggingInByOAuth2.value = true;
+
+    rootStore.authorizeOAuth2({
+        callbackToken: props.token
+    }).then(authResponse => {
+        loggingInByOAuth2.value = false;
+        doAfterLogin(authResponse);
+        navigateToHome();
+    }).catch(error => {
+        loggingInByOAuth2.value = false;
+
+        if (isUserVerifyEmailEnabled() && error.error && error.error.errorCode === KnownErrorCode.UserEmailNotVerified && error.error.context && error.error.context.email) {
+            router.push(`/verify_email?email=${encodeURIComponent(error.error.context.email)}&emailSent=${error.error.context.hasValidEmailVerifyToken || false}`);
+            return;
+        }
+
+        if (!error.processed) {
+            snackbar.value?.showError(error);
+        }
+    });
+}
+</script>

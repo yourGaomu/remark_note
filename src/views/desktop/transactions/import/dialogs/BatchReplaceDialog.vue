@@ -1,0 +1,459 @@
+<template>
+    <v-dialog width="600" :persistent="loading || (mode === 'replaceInvalidItems' && !!sourceItem) || !!targetItem" v-model="showState">
+        <one-column-dialog-layout :title="tt(title)" :cancel-button-title="tt('Cancel')"
+                                  :disabled="loading"
+                                  @cancel="cancel">
+            <template #after-title>
+                <v-btn density="compact" color="default" variant="text"
+                       class="ms-2" :icon="true" :disabled="loading" :loading="loading"
+                       @click="reload"
+                       v-if="type === 'expenseCategory' || type === 'incomeCategory' || type === 'transferCategory' || type === 'account' || type === 'destinationAccount' || type === 'tag'"
+                >
+                    <template #loader>
+                        <v-progress-circular indeterminate size="20"/>
+                    </template>
+                    <v-icon :icon="mdiRefresh" size="22" />
+                    <v-tooltip activator="parent">{{ tt('Refresh') }}</v-tooltip>
+                </v-btn>
+            </template>
+
+            <template #toolbar>
+                <v-btn class="mx-2" density="comfortable" variant="outlined"
+                       :disabled="loading || ((mode === 'replaceInvalidItems' || (mode === 'batchReplace' && type === 'tag')) && !sourceItem && sourceItem !== '') || (!targetItem && targetItem !== '' && !removeTag)"
+                       @click="confirm">{{ tt('OK') }}</v-btn>
+            </template>
+
+            <template #content>
+                <div class="w-100 mt-1 d-flex justify-center" v-if="type === 'expenseCategory' || type === 'incomeCategory' || type === 'transferCategory'">
+                    <v-row>
+                        <v-col cols="12" v-if="mode === 'replaceInvalidItems'">
+                            <v-autocomplete
+                                item-title="name"
+                                item-value="value"
+                                persistent-placeholder
+                                :disabled="loading"
+                                :label="tt('Invalid Category')"
+                                :placeholder="tt('Invalid Category')"
+                                :items="invalidItems"
+                                :no-data-text="tt('No available category')"
+                                v-model="sourceItem">
+                            </v-autocomplete>
+                        </v-col>
+                        <v-col cols="12">
+                            <two-column-select primary-key-field="id" primary-value-field="id" primary-title-field="name"
+                                               primary-icon-field="icon" primary-icon-type-field="iconType" primary-icon-type="category" primary-color-field="color"
+                                               primary-hidden-field="hidden" primary-sub-items-field="subCategories"
+                                               secondary-key-field="id" secondary-value-field="id" secondary-title-field="name"
+                                               secondary-icon-field="icon" secondary-icon-type-field="iconType" secondary-icon-type="category" secondary-color-field="color"
+                                               secondary-hidden-field="hidden"
+                                               :disabled="loading || !hasVisibleExpenseCategories"
+                                               :enable-filter="true" :filter-placeholder="tt('Find category')" :filter-no-items-text="tt('No available category')"
+                                               :show-selection-primary-text="true"
+                                               :custom-selection-primary-text="getTransactionPrimaryCategoryName(targetItem, allCategories[CategoryType.Expense])"
+                                               :custom-selection-secondary-text="getTransactionSecondaryCategoryName(targetItem, allCategories[CategoryType.Expense])"
+                                               :label="tt('Target Category')"
+                                               :placeholder="tt('Target Category')"
+                                               :items="allCategories[CategoryType.Expense]"
+                                               v-model="targetItem"
+                                               v-if="type === 'expenseCategory'">
+                            </two-column-select>
+                            <two-column-select primary-key-field="id" primary-value-field="id" primary-title-field="name"
+                                               primary-icon-field="icon" primary-icon-type-field="iconType" primary-icon-type="category" primary-color-field="color"
+                                               primary-hidden-field="hidden" primary-sub-items-field="subCategories"
+                                               secondary-key-field="id" secondary-value-field="id" secondary-title-field="name"
+                                               secondary-icon-field="icon" secondary-icon-type-field="iconType" secondary-icon-type="category" secondary-color-field="color"
+                                               secondary-hidden-field="hidden"
+                                               :disabled="loading || !hasVisibleIncomeCategories"
+                                               :enable-filter="true" :filter-placeholder="tt('Find category')" :filter-no-items-text="tt('No available category')"
+                                               :show-selection-primary-text="true"
+                                               :custom-selection-primary-text="getTransactionPrimaryCategoryName(targetItem, allCategories[CategoryType.Income])"
+                                               :custom-selection-secondary-text="getTransactionSecondaryCategoryName(targetItem, allCategories[CategoryType.Income])"
+                                               :label="tt('Target Category')"
+                                               :placeholder="tt('Target Category')"
+                                               :items="allCategories[CategoryType.Income]"
+                                               v-model="targetItem"
+                                               v-if="type === 'incomeCategory'">
+                            </two-column-select>
+                            <two-column-select primary-key-field="id" primary-value-field="id" primary-title-field="name"
+                                               primary-icon-field="icon" primary-icon-type-field="iconType" primary-icon-type="category" primary-color-field="color"
+                                               primary-hidden-field="hidden" primary-sub-items-field="subCategories"
+                                               secondary-key-field="id" secondary-value-field="id" secondary-title-field="name"
+                                               secondary-icon-field="icon" secondary-icon-type-field="iconType" secondary-icon-type="category" secondary-color-field="color"
+                                               secondary-hidden-field="hidden"
+                                               :disabled="loading || !hasVisibleTransferCategories"
+                                               :enable-filter="true" :filter-placeholder="tt('Find category')" :filter-no-items-text="tt('No available category')"
+                                               :show-selection-primary-text="true"
+                                               :custom-selection-primary-text="getTransactionPrimaryCategoryName(targetItem, allCategories[CategoryType.Transfer])"
+                                               :custom-selection-secondary-text="getTransactionSecondaryCategoryName(targetItem, allCategories[CategoryType.Transfer])"
+                                               :label="tt('Target Category')"
+                                               :placeholder="tt('Target Category')"
+                                               :items="allCategories[CategoryType.Transfer]"
+                                               v-model="targetItem"
+                                               v-if="type === 'transferCategory'">
+                            </two-column-select>
+                        </v-col>
+                    </v-row>
+                </div>
+                <div class="w-100 mt-1 d-flex justify-center" v-if="type === 'account' || type === 'destinationAccount'">
+                    <v-row>
+                        <v-col cols="12" v-if="mode === 'replaceInvalidItems'">
+                            <v-autocomplete
+                                item-title="name"
+                                item-value="value"
+                                persistent-placeholder
+                                :disabled="loading"
+                                :label="tt('Invalid Account')"
+                                :placeholder="tt('Invalid Account')"
+                                :items="invalidItems"
+                                :no-data-text="tt('No available account')"
+                                v-model="sourceItem">
+                            </v-autocomplete>
+                        </v-col>
+                        <v-col cols="12">
+                            <two-column-select primary-key-field="id" primary-value-field="category"
+                                               primary-title-field="name" primary-footer-field="displayBalance"
+                                               primary-icon-field="icon" primary-icon-type-field="iconType" primary-icon-type="account"
+                                               primary-sub-items-field="accounts"
+                                               :primary-title-i18n="true"
+                                               secondary-key-field="id" secondary-value-field="id"
+                                               secondary-title-field="name" secondary-footer-field="displayBalance"
+                                               secondary-icon-field="icon" secondary-icon-type-field="iconType" secondary-icon-type="account" secondary-color-field="color"
+                                               :disabled="loading || !allVisibleAccounts.length"
+                                               :enable-filter="true" :filter-placeholder="tt('Find account')" :filter-no-items-text="tt('No available account')"
+                                               :custom-selection-primary-text="getAccountDisplayName(targetItem)"
+                                               :label="tt('Target Account')"
+                                               :placeholder="tt('Target Account')"
+                                               :items="allVisibleCategorizedAccounts"
+                                               v-model="targetItem">
+                            </two-column-select>
+                        </v-col>
+                    </v-row>
+                </div>
+                <div class="w-100 mt-1 d-flex justify-center" v-if="type === 'timezone'">
+                    <v-row>
+                        <v-col cols="12">
+                            <v-autocomplete
+                                item-title="displayNameWithUtcOffset"
+                                item-value="name"
+                                persistent-placeholder
+                                auto-select-first
+                                :disabled="loading"
+                                :label="tt('Target Timezone')"
+                                :placeholder="tt('Target Timezone')"
+                                :items="allTimezones"
+                                v-model="targetItem"
+                            >
+                            </v-autocomplete>
+                        </v-col>
+                    </v-row>
+                </div>
+                <div class="w-100 mt-1 d-flex justify-center" v-if="type === 'tag'">
+                    <v-row>
+                        <v-col cols="12" v-if="mode === 'batchReplace'">
+                            <v-autocomplete
+                                item-title="name"
+                                item-value="value"
+                                persistent-placeholder
+                                :disabled="loading"
+                                :label="tt('Source Value')"
+                                :placeholder="tt('Source Value')"
+                                :items="allSourceTagItems"
+                                :no-data-text="tt('No available tag')"
+                                v-model="sourceItem">
+                            </v-autocomplete>
+                        </v-col>
+                        <v-col cols="12" v-if="mode === 'replaceInvalidItems'">
+                            <v-autocomplete
+                                item-title="name"
+                                item-value="value"
+                                persistent-placeholder
+                                :disabled="loading"
+                                :label="tt('Invalid Tag')"
+                                :placeholder="tt('Invalid Tag')"
+                                :items="invalidItems"
+                                :no-data-text="tt('No available tag')"
+                                v-model="sourceItem">
+                            </v-autocomplete>
+                        </v-col>
+                        <v-col cols="12">
+                            <v-autocomplete
+                                item-title="name"
+                                item-value="id"
+                                persistent-placeholder
+                                chips
+                                :disabled="loading || removeTag"
+                                :label="tt('Target Tag')"
+                                :placeholder="tt('Target Tag')"
+                                :items="allTagsWithGroupHeader"
+                                :no-data-text="tt('No available tag')"
+                                v-model="targetItem"
+                            >
+                                <template #chip="{ props, internalItem }">
+                                    <v-chip :prepend-icon="mdiPound" :text="internalItem.title" v-bind="props"/>
+                                </template>
+
+                                <template #subheader="{ props }">
+                                    <v-list-subheader class="text-body-small">{{ props['title'] }}</v-list-subheader>
+                                </template>
+
+                                <template #item="{ props, internalItem }">
+                                    <v-list-item :value="internalItem.value" v-bind="props" v-if="internalItem.raw instanceof TransactionTag && !internalItem.raw.hidden">
+                                        <template #title>
+                                            <v-list-item-title>
+                                                <div class="d-flex align-center">
+                                                    <v-icon size="20" start :icon="mdiPound"/>
+                                                    <span>{{ internalItem.title }}</span>
+                                                </div>
+                                            </v-list-item-title>
+                                        </template>
+                                    </v-list-item>
+                                </template>
+                            </v-autocomplete>
+                        </v-col>
+                        <v-col cols="12" class="py-0" v-if="mode === 'batchReplace' || mode === 'replaceInvalidItems'">
+                            <v-switch :disabled="loading"
+                                      :label="tt('Remove Tag')" v-model="removeTag"/>
+                        </v-col>
+                    </v-row>
+                </div>
+            </template>
+        </one-column-dialog-layout>
+    </v-dialog>
+
+    <snack-bar ref="snackbar" />
+</template>
+
+<script setup lang="ts">
+import SnackBar from '@/components/desktop/SnackBar.vue';
+
+import { ref, computed, useTemplateRef, watch } from 'vue';
+
+import { useI18n } from '@/locales/helpers.ts';
+import { useTransactionTagSelectionBase } from '@/components/base/TransactionTagSelectionBase.ts';
+
+import { useSettingsStore } from '@/stores/setting.ts';
+import { useAccountsStore } from '@/stores/account.ts';
+import { useTransactionCategoriesStore } from '@/stores/transactionCategory.ts';
+import { useTransactionTagsStore } from '@/stores/transactionTag.ts';
+
+import type { NameValue } from '@/core/base.ts';
+import { CategoryType } from '@/core/category.ts';
+import type { LocalizedTimezoneInfo } from '@/core/timezone.ts';
+
+import { Account, type CategorizedAccountWithDisplayBalance } from '@/models/account.ts';
+import type { TransactionCategory } from '@/models/transaction_category.ts';
+import { TransactionTag } from '@/models/transaction_tag.ts';
+
+import { getCurrentUnixTime } from '@/lib/datetime.ts';
+import {
+    getTransactionPrimaryCategoryName,
+    getTransactionSecondaryCategoryName
+} from '@/lib/category.ts';
+
+import {
+    mdiRefresh,
+    mdiPound
+} from '@mdi/js';
+
+export type BatchReplaceDialogMode = 'batchReplace' | 'batchAdd' | 'replaceInvalidItems';
+export type BatchReplaceDialogDataType = 'expenseCategory' | 'incomeCategory' | 'transferCategory' | 'account' | 'destinationAccount' | 'timezone' | 'tag';
+
+type SnackBarType = InstanceType<typeof SnackBar>;
+
+interface BatchReplaceDialogResponse {
+    sourceItem?: string;
+    targetItem?: string;
+}
+
+const {
+    tt,
+    getAllTimezones,
+    getCategorizedAccountsWithDisplayBalance
+} = useI18n();
+
+const { allTagsWithGroupHeader } = useTransactionTagSelectionBase({ modelValue: [] }, false);
+
+const settingsStore = useSettingsStore();
+const accountsStore = useAccountsStore();
+const transactionCategoriesStore = useTransactionCategoriesStore();
+const transactionTagsStore = useTransactionTagsStore();
+
+const snackbar = useTemplateRef<SnackBarType>('snackbar');
+
+let resolveFunc: ((response: BatchReplaceDialogResponse) => void) | null = null;
+let rejectFunc: ((reason?: unknown) => void) | null = null;
+
+const showState = ref<boolean>(false);
+const loading = ref<boolean>(false);
+const mode = ref<BatchReplaceDialogMode | ''>('');
+const type = ref<BatchReplaceDialogDataType | ''>('');
+const invalidItems = ref<NameValue[] | undefined>([]);
+const allSourceTagItems = ref<NameValue[] | undefined>([]);
+const sourceItem = ref<string | undefined>(undefined);
+const targetItem = ref<string | undefined>(undefined);
+const removeTag = ref<boolean>(false);
+
+const showAccountBalance = computed<boolean>(() => settingsStore.appSettings.showAccountBalance);
+const customAccountCategoryOrder = computed<string>(() => settingsStore.appSettings.accountCategoryOrders);
+const allAccounts = computed<Account[]>(() => accountsStore.allPlainAccounts);
+const allVisibleAccounts = computed<Account[]>(() => accountsStore.allVisiblePlainAccounts);
+const allVisibleCategorizedAccounts = computed<CategorizedAccountWithDisplayBalance[]>(() => getCategorizedAccountsWithDisplayBalance(allVisibleAccounts.value, showAccountBalance.value, customAccountCategoryOrder.value));
+const allCategories = computed<Record<number, TransactionCategory[]>>(() => transactionCategoriesStore.allTransactionCategories);
+const allTimezones = computed<LocalizedTimezoneInfo[]>(() => getAllTimezones(getCurrentUnixTime(), false));
+
+const hasVisibleExpenseCategories = computed<boolean>(() => transactionCategoriesStore.hasVisibleExpenseCategories);
+const hasVisibleIncomeCategories = computed<boolean>(() => transactionCategoriesStore.hasVisibleIncomeCategories);
+const hasVisibleTransferCategories = computed<boolean>(() => transactionCategoriesStore.hasVisibleTransferCategories);
+
+const title = computed<string>(() => {
+    if (mode.value === 'batchReplace' && type.value === 'expenseCategory') {
+        return tt('Batch Replace Selected Expense Categories');
+    } else if (mode.value === 'batchReplace' && type.value === 'incomeCategory') {
+        return tt('Batch Replace Selected Income Categories');
+    } else if (mode.value === 'batchReplace' && type.value === 'transferCategory') {
+        return tt('Batch Replace Selected Transfer Categories');
+    } else if (mode.value === 'batchReplace' && type.value === 'account') {
+        return tt('Batch Replace Selected Accounts');
+    } else if (mode.value === 'batchReplace' && type.value === 'destinationAccount') {
+        return tt('Batch Replace Selected Destination Accounts');
+    } else if (mode.value === 'batchReplace' && type.value === 'timezone') {
+        return tt('Batch Replace Selected Transaction Timezones');
+    } else if (mode.value === 'batchReplace' && type.value === 'tag') {
+        return tt('Batch Replace Selected Transaction Tags');
+    } else if (mode.value === 'batchAdd' && type.value === 'tag') {
+        return tt('Batch Add Transaction Tags');
+    } else if (mode.value === 'replaceInvalidItems' && type.value === 'expenseCategory') {
+        return tt('Replace Invalid Expense Categories');
+    } else if (mode.value === 'replaceInvalidItems' && type.value === 'incomeCategory') {
+        return tt('Replace Invalid Income Categories');
+    } else if (mode.value === 'replaceInvalidItems' && type.value === 'transferCategory') {
+        return tt('Replace Invalid Transfer Categories');
+    } else if (mode.value === 'replaceInvalidItems' && type.value === 'account') {
+        return tt('Replace Invalid Accounts');
+    } else if (mode.value === 'replaceInvalidItems' && type.value === 'tag') {
+        return tt('Replace Invalid Transaction Tags');
+    }
+
+    return '';
+});
+
+function getAccountDisplayName(accountId?: string): string {
+    if (accountId) {
+        return Account.findAccountNameById(allAccounts.value, accountId) || '';
+    } else {
+        return tt('None');
+    }
+}
+
+function open(options: { mode: BatchReplaceDialogMode; type: BatchReplaceDialogDataType; invalidItems?: NameValue[], allSourceTagItems?: NameValue[] }): Promise<BatchReplaceDialogResponse> {
+    mode.value = options.mode;
+    type.value = options.type;
+    sourceItem.value = undefined;
+
+    if (mode.value === 'replaceInvalidItems') {
+        invalidItems.value = options.invalidItems;
+    } else {
+        invalidItems.value = undefined;
+    }
+
+    if (type.value === 'tag' && mode.value === 'batchReplace') {
+        allSourceTagItems.value = options.allSourceTagItems;
+    } else {
+        allSourceTagItems.value = undefined;
+    }
+
+    targetItem.value = undefined;
+    removeTag.value = false;
+    showState.value = true;
+
+    return new Promise((resolve, reject) => {
+        resolveFunc = resolve;
+        rejectFunc = reject;
+    });
+}
+
+function reload(): void {
+    if (type.value === 'expenseCategory' || type.value === 'incomeCategory' || type.value === 'transferCategory') {
+        loading.value = true;
+
+        transactionCategoriesStore.loadAllCategories({ force: true }).then(() => {
+            loading.value = false;
+        }).catch(error => {
+            loading.value = false;
+
+            if (!error.processed) {
+                snackbar.value?.showError(error);
+            }
+        });
+    } else if (type.value === 'account' || type.value === 'destinationAccount') {
+        loading.value = true;
+
+        accountsStore.loadAllAccounts({ force: true }).then(() => {
+            loading.value = false;
+        }).catch(error => {
+            loading.value = false;
+
+            if (!error.processed) {
+                snackbar.value?.showError(error);
+            }
+        });
+    } else if (type.value === 'tag') {
+        loading.value = true;
+
+        transactionTagsStore.loadAllTags({ force: true }).then(() => {
+            loading.value = false;
+        }).catch(error => {
+            loading.value = false;
+
+            if (!error.processed) {
+                snackbar.value?.showError(error);
+            }
+        });
+    }
+}
+
+function confirm(): void {
+    let targetItemValue: string | undefined = targetItem.value;
+
+    if (type.value === 'tag' && removeTag.value) {
+        targetItemValue = undefined;
+    }
+
+    if (mode.value === 'batchReplace' && type.value !== 'tag') {
+        resolveFunc?.({
+            targetItem: targetItemValue
+        });
+    } else if (mode.value === 'batchReplace' && type.value === 'tag') {
+        resolveFunc?.({
+            sourceItem: sourceItem.value,
+            targetItem: targetItemValue
+        });
+    } else if (mode.value === 'batchAdd') {
+        resolveFunc?.({
+            targetItem: targetItemValue
+        });
+    } else if (mode.value === 'replaceInvalidItems') {
+        resolveFunc?.({
+            sourceItem: sourceItem.value,
+            targetItem: targetItemValue
+        });
+    }
+
+    showState.value = false;
+}
+
+function cancel(): void {
+    rejectFunc?.();
+    showState.value = false;
+}
+
+watch(removeTag, (newValue) => {
+    if (newValue) {
+        targetItem.value = undefined;
+    }
+});
+
+defineExpose({
+    open
+});
+</script>
