@@ -42,5 +42,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          build-args: |
+            BUILD_NODE_OPTIONS=--max-old-space-size=4096
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
