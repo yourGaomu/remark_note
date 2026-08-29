@@ -120,20 +120,26 @@ export function StateMessage({ loading, error, empty, onRetry }: {
   return null;
 }
 
-export function SettingsRow({ icon, title, value, danger, onPress }: {
+export function SettingsRow({ icon, title, value, danger, loading, disabled, onPress }: {
   icon: IconName;
   title: string;
   value?: string;
   danger?: boolean;
+  loading?: boolean;
+  disabled?: boolean;
   onPress?: () => void;
 }) {
   const foreground = danger ? colors.expense : colors.text;
   return (
-    <Pressable style={({ pressed }) => [styles.settingsRow, pressed && styles.pressed]} onPress={onPress}>
+    <Pressable
+      disabled={disabled || loading}
+      style={({ pressed }) => [styles.settingsRow, (disabled || loading) && styles.disabledRow, pressed && styles.pressed]}
+      onPress={onPress}
+    >
       <Ionicons name={icon} size={22} color={danger ? colors.expense : colors.primary} />
       <Text style={[styles.settingsTitle, { color: foreground }]}>{title}</Text>
-      {value ? <Text style={styles.settingsValue}>{value}</Text> : null}
-      {onPress ? <Ionicons name="chevron-forward" size={18} color={colors.textMuted} /> : null}
+      {loading ? <ActivityIndicator size="small" color={colors.primary} /> : value ? <Text style={styles.settingsValue}>{value}</Text> : null}
+      {onPress && !loading ? <Ionicons name="chevron-forward" size={18} color={colors.textMuted} /> : null}
     </Pressable>
   );
 }
@@ -182,6 +188,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  disabledRow: { opacity: 0.65 },
   settingsTitle: { flex: 1, fontSize: 16, fontWeight: '500' },
   settingsValue: { color: colors.textMuted, fontSize: 14 },
 });

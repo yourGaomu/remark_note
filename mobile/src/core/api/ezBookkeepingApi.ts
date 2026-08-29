@@ -1,7 +1,10 @@
 import { request } from './httpClient';
+import { AccountType } from '../types/domain';
 import type {
   Account,
   AuthResponse,
+  CreateAccountInput,
+  CreateCategoryInput,
   CreateTransactionInput,
   Transaction,
   TransactionCategory,
@@ -30,12 +33,83 @@ export const ezBookkeepingApi = {
     return request({ url: '/v1/users/profile/get.json', method: 'GET' });
   },
 
-  getAccounts(): Promise<Account[]> {
-    return request({ url: '/v1/accounts/list.json?visible_only=true', method: 'GET' });
+  getAccounts(visibleOnly = true): Promise<Account[]> {
+    return request({ url: `/v1/accounts/list.json?visible_only=${visibleOnly}`, method: 'GET' });
+  },
+
+  createAccount(input: CreateAccountInput): Promise<Account> {
+    const name = input.name.trim();
+
+    return request({
+      url: '/v1/accounts/add.json',
+      method: 'POST',
+      data: {
+        name,
+        category: input.category,
+        type: AccountType.SingleAccount,
+        icon: '1',
+        iconType: 0,
+        color: '0F8B7D',
+        currency: input.currency,
+        balance: '0',
+        balanceTime: 0,
+        comment: input.comment?.trim() || '',
+        clientSessionId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      },
+    });
+  },
+
+  hideAccount(id: string, hidden: boolean): Promise<boolean> {
+    return request({
+      url: '/v1/accounts/hide.json',
+      method: 'POST',
+      data: { id, hidden },
+    });
+  },
+
+  deleteAccount(id: string): Promise<boolean> {
+    return request({
+      url: '/v1/accounts/delete.json',
+      method: 'POST',
+      data: { id },
+    });
   },
 
   getCategories(): Promise<Record<number, TransactionCategory[]>> {
     return request({ url: '/v1/transaction/categories/list.json', method: 'GET' });
+  },
+
+  createCategory(input: CreateCategoryInput): Promise<TransactionCategory> {
+    return request({
+      url: '/v1/transaction/categories/add.json',
+      method: 'POST',
+      data: {
+        name: input.name.trim(),
+        type: input.type,
+        parentId: input.parentId || '0',
+        icon: '1',
+        iconType: 0,
+        color: '0F8B7D',
+        comment: input.comment?.trim() || '',
+        clientSessionId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      },
+    });
+  },
+
+  hideCategory(id: string, hidden: boolean): Promise<boolean> {
+    return request({
+      url: '/v1/transaction/categories/hide.json',
+      method: 'POST',
+      data: { id, hidden },
+    });
+  },
+
+  deleteCategory(id: string): Promise<boolean> {
+    return request({
+      url: '/v1/transaction/categories/delete.json',
+      method: 'POST',
+      data: { id },
+    });
   },
 
   getTransactions(page = 1, keyword = ''): Promise<TransactionPage> {

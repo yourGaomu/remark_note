@@ -4,6 +4,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Pressable, StyleSheet, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AddTransactionScreen } from '../../features/transactions/AddTransactionScreen';
 import { AccountsScreen } from '../../features/accounts/AccountsScreen';
@@ -11,6 +12,7 @@ import { DashboardScreen } from '../../features/dashboard/DashboardScreen';
 import { SettingsScreen } from '../../features/settings/SettingsScreen';
 import { StatisticsScreen } from '../../features/statistics/StatisticsScreen';
 import { TransactionsScreen } from '../../features/transactions/TransactionsScreen';
+import { CategoriesScreen } from '../../features/categories/CategoriesScreen';
 import { colors } from '../../shared/theme/colors';
 import type { MainTabParamList, RootStackParamList } from './types';
 
@@ -26,6 +28,9 @@ const tabIcons: Record<keyof MainTabParamList, keyof typeof Ionicons.glyphMap> =
 };
 
 function MainTabNavigator({ navigation }: NativeStackScreenProps<RootStackParamList, 'Main'>) {
+  const insets = useSafeAreaInsets();
+  const tabBarHeight = 66 + insets.bottom;
+
   return (
     <View style={styles.container}>
       <MainTabs.Navigator
@@ -34,7 +39,13 @@ function MainTabNavigator({ navigation }: NativeStackScreenProps<RootStackParamL
           tabBarActiveTintColor: colors.primary,
           tabBarInactiveTintColor: colors.textMuted,
           tabBarLabelStyle: { fontSize: 11, fontWeight: '600', paddingBottom: 2 },
-          tabBarStyle: { height: 66, paddingTop: 7, borderTopColor: colors.border, backgroundColor: colors.surface },
+          tabBarStyle: {
+            height: tabBarHeight,
+            paddingTop: 7,
+            paddingBottom: insets.bottom,
+            borderTopColor: colors.border,
+            backgroundColor: colors.surface,
+          },
           tabBarIcon: ({ color, size }) => <Ionicons name={tabIcons[route.name]} color={color} size={size} />,
         })}
       >
@@ -47,7 +58,7 @@ function MainTabNavigator({ navigation }: NativeStackScreenProps<RootStackParamL
       <Pressable
         accessibilityLabel="新增交易"
         accessibilityRole="button"
-        style={({ pressed }) => [styles.addButton, pressed && { opacity: 0.78 }]}
+        style={({ pressed }) => [styles.addButton, { bottom: tabBarHeight + 12 }, pressed && { opacity: 0.78 }]}
         onPress={() => navigation.navigate('AddTransaction')}
       >
         <Ionicons name="add" color="#FFFFFF" size={30} />
@@ -62,6 +73,7 @@ export function AppNavigator() {
       <RootStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
         <RootStack.Screen name="Main" component={MainTabNavigator} />
         <RootStack.Screen name="AddTransaction" component={AddTransactionScreen} options={{ presentation: 'modal' }} />
+        <RootStack.Screen name="Categories" component={CategoriesScreen} options={{ presentation: 'modal' }} />
       </RootStack.Navigator>
     </NavigationContainer>
   );
@@ -72,7 +84,6 @@ const styles = StyleSheet.create({
   addButton: {
     position: 'absolute',
     right: 18,
-    bottom: 78,
     width: 54,
     height: 54,
     borderRadius: 27,

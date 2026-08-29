@@ -96,6 +96,37 @@ export interface CreateTransactionInput {
   comment: string;
 }
 
+export interface CreateAccountInput {
+  name: string;
+  category: AccountCategory;
+  currency: string;
+  comment?: string;
+}
+
+export interface CreateCategoryInput {
+  name: string;
+  type: CategoryType;
+  parentId?: string;
+  comment?: string;
+}
+
+export enum AccountCategory {
+  Cash = 1,
+  CheckingAccount = 2,
+  CreditCard = 3,
+  Virtual = 4,
+  Debt = 5,
+  Receivables = 6,
+  Investment = 7,
+  SavingsAccount = 8,
+  CertificateOfDeposit = 9,
+}
+
+export enum AccountType {
+  SingleAccount = 1,
+  MultiSubAccounts = 2,
+}
+
 export enum TransactionType {
   Income = 2,
   Expense = 3,

@@ -1,6 +1,7 @@
 export type RootStackParamList = {
   Main: undefined;
   AddTransaction: undefined;
+  Categories: undefined;
 };
 
 export type MainTabParamList = {

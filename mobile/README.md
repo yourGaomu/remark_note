@@ -29,6 +29,23 @@ npx eas build --platform android --profile preview
 
 `preview` 会生成可直接安装的 APK；正式发布使用 `production` 配置。API 地址需要在构建前通过 EAS 环境变量或项目环境文件注入，不能把密钥写入代码。
 
+## OTA 更新
+
+OTA 只能更新 JavaScript、样式和资源，不能替换应用图标、原生模块或 Android 原生配置。首次启用 OTA 或修改图标后，需要先重新构建并安装 APK：
+
+```powershell
+npx eas build --platform android --profile preview
+```
+
+之后发布界面和业务代码更新：
+
+```powershell
+npx eas update --channel preview --environment preview --message "更新移动端界面"
+npx eas update --channel production --environment production --message "发布移动端更新"
+```
+
+预览包只接收 `preview` channel，正式包只接收 `production` channel。发布前请在 EAS 项目中分别配置 `EXPO_PUBLIC_EZBK_API_URL` 环境变量。移动端设置页也提供手动检查更新入口。
+
 ## 目录
 
 ```text
@@ -52,4 +69,6 @@ Token 存储在 `expo-secure-store`。请求遇到 401 时，客户端只自动�
 
 ## 当前范围
 
-移动端当前覆盖登录、财务概览、交易列表、新增交易、统计、账户和设置页面。账户、分类管理、导出等复杂编辑能力仍通过 Web 端使用，移动端页面会明确提示尚未接入，避免产生无效点击。
+移动端当前覆盖登录、财务概览、交易列表、新增交易、统计、账户和设置页面。第二阶段第一批已接入普通账户新增、隐藏/删除，以及收入、支出、转账分类的新增、子分类新增、隐藏和删除。账户复杂编辑、图标选择、数据导出和两步验证仍通过 Web 端使用。
+
+应用图标使用 `assets/icon.png`。图标属于 Android 原生资源，修改后必须重新构建 APK，不能通过 OTA 替换。
