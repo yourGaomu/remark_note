@@ -1,0 +1,11 @@
+Asset type: High-fidelity mobile finance app UI concept for the ezBookkeeping React Native application.
+Primary request: Design a polished Android mobile dashboard for personal bookkeeping, showing a clear financial overview at a glance.
+Scene/backdrop: A realistic modern smartphone screen mockup, portrait orientation, clean neutral studio background, the entire screen visible and centered.
+Subject: The app screen includes a compact header with the date and a simple circular user avatar, a prominent total balance section, two small income and expense summaries, a monthly cash-flow visualization, a recent transactions list with recognizable category icons, and a fixed bottom navigation with Overview, Transactions, Statistics, and Settings plus a prominent add-transaction button.
+Style/medium: Premium production-ready mobile product design, clean Swiss-inspired UI, restrained rounded rectangles, crisp typography, subtle borders, strong visual hierarchy, professional personal finance app, no decorative illustrations.
+Composition/framing: Front-facing phone screen, portrait 9:19.5 ratio, dashboard fills the phone display, generous but efficient spacing, all controls aligned to an 8-point grid, no elements clipped or overlapping.
+Lighting/mood: Soft studio light, calm, trustworthy, focused, highly legible.
+Color palette: White and very light cool gray surfaces, deep graphite text, teal-green primary accent, muted blue for income, coral-red for expense, small amount of warm yellow only for category accents. Avoid a monochromatic blue or purple palette.
+Text (verbatim): "财务概览", "总余额", "本月收入", "本月支出", "最近交易", "概览", "交易", "统计", "设置", "新增交易", "¥ 18,640.50", "¥ 12,800.00", "¥ 4,259.50", "午餐", "工资收入", "交通出行".
+Constraints: Render the Chinese UI labels accurately and legibly. Make the result feel like an actual usable React Native screen rather than a marketing landing page. Show one complete phone screen and a small hint of the studio background only.
+Avoid: English placeholder text, fake logos, unreadable tiny text, excessive gradients, glassmorphism, oversized cards inside cards, clutter, charts that hide labels, device hands, people, and cropped phone edges.
