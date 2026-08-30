@@ -2,7 +2,7 @@ import { Alert, StyleSheet, Text, View } from 'react-native';
 import { useState } from 'react';
 
 import { useAuth } from '../../core/auth/AuthProvider';
-import { checkAndApplyUpdate } from '../../core/update/updateService';
+import { checkAndApplyUpdate, getUpdateIdentity } from '../../core/update/updateService';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Card, IconCircle, Screen, ScreenHeader, SettingsRow } from '../../shared/components/ui';
@@ -14,6 +14,7 @@ export function SettingsScreen() {
   const { user, logout } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const updateIdentity = getUpdateIdentity();
 
   async function checkForUpdates(): Promise<void> {
     if (checkingUpdates) {
@@ -27,7 +28,10 @@ export function SettingsScreen() {
       if (outcome === 'disabled') {
         Alert.alert('暂不可检查', '当前开发环境未启用 OTA 更新，请安装正式构建版本后再试。');
       } else if (outcome === 'current') {
-        Alert.alert('已是最新版本', '当前应用已经是最新版本。');
+        Alert.alert(
+          '已是当前运行时的最新版本',
+          `运行时：${updateIdentity.runtimeVersion}\n通道：${updateIdentity.channel}\n更新：${shortUpdateId(updateIdentity.updateId)}`,
+        );
       }
     } catch (error) {
       Alert.alert('检查更新失败', error instanceof Error ? error.message : '请稍后重试');
@@ -45,7 +49,7 @@ export function SettingsScreen() {
 
   return (
     <Screen>
-      <ScreenHeader title="设置" subtitle="管理偏好和账号安全" />
+      <ScreenHeader title="设置" subtitle={`管理偏好和账号安全 · v${updateIdentity.appVersion}`} />
       <Card style={styles.profile}>
         <IconCircle name="person" size={25} color="#FFFFFF" backgroundColor={colors.income} />
         <View style={styles.profileCopy}>
@@ -59,6 +63,7 @@ export function SettingsScreen() {
       </Card>
       <Card style={styles.group}>
         <SettingsRow icon="folder-outline" title="分类管理" onPress={() => navigation.navigate('Categories')} />
+        <SettingsRow icon="pricetags-outline" title="标签管理" onPress={() => navigation.navigate('Tags')} />
         <SettingsRow icon="download-outline" title="数据导出" onPress={() => Alert.alert('数据导出', '该功能将在下一阶段接入')} />
       </Card>
       <Card style={styles.group}>
@@ -67,13 +72,21 @@ export function SettingsScreen() {
         <SettingsRow icon="cloud-download-outline" title="检查更新" loading={checkingUpdates} onPress={() => void checkForUpdates()} />
       </Card>
       <Card style={styles.group}>
-        <SettingsRow icon="information-circle-outline" title="关于 ezBookkeeping" value="1.0.1" />
+        <SettingsRow icon="information-circle-outline" title="关于 ezBookkeeping" value={`v${updateIdentity.appVersion}`} />
+        <SettingsRow icon="pricetag-outline" title="版本标识" value={`v${updateIdentity.appVersion} · ${shortUpdateId(updateIdentity.updateId)}`} />
+        <SettingsRow icon="git-branch-outline" title="OTA 运行时" value={updateIdentity.runtimeVersion} />
+        <SettingsRow icon="cloud-done-outline" title="当前更新" value={updateIdentity.isEmbedded ? 'APK 内置版本' : 'OTA 更新版本'} />
+        <SettingsRow icon="radio-outline" title="更新通道" value={updateIdentity.channel} />
       </Card>
       <Card style={styles.group}>
         <SettingsRow icon="log-out-outline" title="退出登录" danger onPress={confirmLogout} />
       </Card>
     </Screen>
   );
+}
+
+function shortUpdateId(updateId: string): string {
+  return updateId === 'embedded' ? 'APK 内置版本' : updateId.slice(0, 8);
 }
 
 const styles = StyleSheet.create({

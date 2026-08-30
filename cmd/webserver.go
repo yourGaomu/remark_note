@@ -103,6 +103,7 @@ func startWebServer(c *core.CliContext) error {
 
 	router := gin.New()
 	router.Use(bindMiddleware(middlewares.Recovery, config))
+	router.Use(bindMiddleware(middlewares.CORS, config))
 
 	err = router.SetTrustedProxies(config.TrustedProxyTextualIPs)
 

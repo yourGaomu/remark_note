@@ -13,6 +13,7 @@ import { SettingsScreen } from '../../features/settings/SettingsScreen';
 import { StatisticsScreen } from '../../features/statistics/StatisticsScreen';
 import { TransactionsScreen } from '../../features/transactions/TransactionsScreen';
 import { CategoriesScreen } from '../../features/categories/CategoriesScreen';
+import { TagsScreen } from '../../features/tags/TagsScreen';
 import { colors } from '../../shared/theme/colors';
 import type { MainTabParamList, RootStackParamList } from './types';
 
@@ -74,6 +75,7 @@ export function AppNavigator() {
         <RootStack.Screen name="Main" component={MainTabNavigator} />
         <RootStack.Screen name="AddTransaction" component={AddTransactionScreen} options={{ presentation: 'modal' }} />
         <RootStack.Screen name="Categories" component={CategoriesScreen} options={{ presentation: 'modal' }} />
+        <RootStack.Screen name="Tags" component={TagsScreen} options={{ presentation: 'modal' }} />
       </RootStack.Navigator>
     </NavigationContainer>
   );

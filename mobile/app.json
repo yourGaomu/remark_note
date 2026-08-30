@@ -2,13 +2,11 @@
   "expo": {
     "name": "ezBookkeeping",
     "slug": "ezbookkeeping-mobile",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.2",
     "updates": {
       "url": "https://u.expo.dev/e2084446-3db2-4709-a98b-045210b38c04",
       "checkAutomatically": "ON_LOAD",

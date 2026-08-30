@@ -50,6 +50,7 @@ export interface TransactionCategory {
 
 export interface Transaction {
   id: string;
+  timeSequenceId?: string;
   type: number;
   categoryId: string;
   category?: TransactionCategory;
@@ -63,14 +64,45 @@ export interface Transaction {
   destinationAmount?: number | null;
   hideAmount: boolean;
   tagIds: string[];
+  tags?: TransactionTag[];
   comment: string;
   editable: boolean;
 }
 
+export interface TransactionTag {
+  id: string;
+  name: string;
+  groupId: string;
+  displayOrder: number;
+  hidden: boolean;
+}
+
+export interface TransactionTagGroup {
+  id: string;
+  name: string;
+  displayOrder: number;
+}
+
 export interface TransactionPage {
   items: Transaction[];
-  nextTimeSequenceId?: number;
+  nextTimeSequenceId?: number | string;
   totalCount?: number;
+}
+
+export interface TransactionListQuery {
+  page?: number;
+  count?: number;
+  maxTime?: number;
+  minTime?: number;
+  type?: number;
+  categoryIds?: string;
+  accountIds?: string;
+  tagFilter?: string;
+  amountFilter?: string;
+  keyword?: string;
+  matchMode?: number;
+  mustHavePictures?: boolean;
+  withCount?: boolean;
 }
 
 export interface TransactionStatisticItem {
@@ -84,6 +116,17 @@ export interface TransactionStatistic {
   startTime: number;
   endTime: number;
   items: TransactionStatisticItem[];
+}
+
+export interface TransactionStatisticTrend {
+  year: number;
+  month: number;
+  items: TransactionStatisticItem[];
+}
+
+export interface TransactionDailyAmount {
+  date: string;
+  amounts: { currency: string; incomeAmount: string; expenseAmount: string }[];
 }
 
 export interface CreateTransactionInput {
